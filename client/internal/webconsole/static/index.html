@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Plntir Operations</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="login-view" class="auth-shell">
+    <main class="auth-card" aria-labelledby="login-title">
+      <div class="brand-mark" aria-hidden="true">P</div>
+      <p class="eyebrow">PLNTIR CONTROL PLANE</p>
+      <h1 id="login-title">Operations Console</h1>
+      <p class="muted">Privater Zugriff über das Cloudflare Mesh. Sitzungen werden nur im Arbeitsspeicher gehalten.</p>
+      <form id="login-form" class="stack-form">
+        <label>Benutzer
+          <input id="login-username" name="username" autocomplete="username" value="operator" required>
+        </label>
+        <label>Dashboard-Passwort
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p id="login-error" class="form-error" role="alert"></p>
+        <button class="button primary" type="submit">Anmelden</button>
+      </form>
+      <div class="auth-foot"><span class="status-dot neutral"></span> HTTPS · Mesh-only · Audit aktiv</div>
+    </main>
+  </div>
+
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark small" aria-hidden="true">P</div>
+        <div><strong>PLNTIR</strong><span>OPERATIONS</span></div>
+      </div>
+      <nav id="navigation" aria-label="Dashboard-Navigation">
+        <button class="nav-item active" data-view="overview"><span>01</span>Übersicht</button>
+        <button class="nav-item" data-view="telemetry"><span>02</span>Telemetrie</button>
+        <button class="nav-item private-nav" data-view="files"><span>03</span>Dateien<i>LOCK</i></button>
+        <button class="nav-item private-nav" data-view="safari"><span>04</span>Safari<i>LOCK</i></button>
+        <button class="nav-item private-nav" data-view="exports"><span>05</span>Exporte<i>LOCK</i></button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="mesh-label"><span class="status-dot" id="sidebar-mesh-dot"></span><span><b>Mesh</b><small id="sidebar-mesh">Prüfe …</small></span></div>
+        <button id="logout-button" class="text-button">Abmelden</button>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="view-kicker">SYSTEM OVERVIEW</p>
+          <h1 id="view-title">Operations</h1>
+        </div>
+        <div class="top-actions">
+          <span id="last-update" class="last-update">Noch kein Snapshot</span>
+          <button id="refresh-button" class="icon-button" title="Collector jetzt aktualisieren" aria-label="Collector aktualisieren">↻</button>
+          <button id="private-button" class="button lock-button"><span>◇</span><b>Private Daten</b><small>Gesperrt</small></button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section id="view-overview" class="view active-view">
+          <div class="hero-grid">
+            <article class="hero-card">
+              <p>MANAGED MAC</p><div class="hero-value"><span id="mac-state-dot" class="status-dot"></span><strong id="mac-state">–</strong></div><small id="mac-last-check">Warte auf Status</small>
+            </article>
+            <article class="hero-card">
+              <p>CONTROL NODE</p><div class="hero-value"><span id="node-state-dot" class="status-dot"></span><strong id="node-state">–</strong></div><small id="node-host">–</small>
+            </article>
+            <article class="hero-card">
+              <p>INTEGRITÄT</p><div class="hero-value"><span id="integrity-dot" class="status-dot"></span><strong id="integrity-state">–</strong></div><small id="integrity-detail">Alert-only</small>
+            </article>
+            <article class="hero-card">
+              <p>SICHERHEIT</p><div class="hero-value"><span id="security-dot" class="status-dot"></span><strong id="security-state">–</strong></div><small id="security-detail">–</small>
+            </article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="panel span-2">
+              <div class="panel-head"><div><p class="eyebrow">ENDPOINT</p><h2>Mac Status</h2></div><span id="mac-online-pill" class="pill">–</span></div>
+              <dl id="mac-metrics" class="metric-grid"></dl>
+              <div class="timeline-wrap"><div class="section-label"><span>VERFÜGBARKEIT</span><small id="timeline-caption">Letzte Checks</small></div><div id="health-timeline" class="health-timeline"></div></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><div><p class="eyebrow">INFRASTRUCTURE</p><h2>Control Node</h2></div></div>
+              <dl id="node-metrics" class="metric-list"></dl>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><div><p class="eyebrow">ATTENTION</p><h2>Hinweise</h2></div><span id="alert-count" class="count">0</span></div>
+              <div id="alerts" class="alert-list empty-state">Keine aktiven Hinweise.</div>
+            </article>
+            <article class="panel span-2">
+              <div class="panel-head"><div><p class="eyebrow">ACTIVITY</p><h2>Letzte Zustandsänderungen</h2></div></div>
+              <div id="events" class="event-list empty-state">Noch keine Events empfangen.</div>
+            </article>
+            <article class="panel span-2">
+              <div class="panel-head"><div><p class="eyebrow">CONTROL AUDIT</p><h2>Dashboard-Aktivität</h2></div><button id="audit-reload" class="text-button">Neu laden</button></div>
+              <div id="audit-events" class="event-list empty-state">Private Daten entsperren, um das Audit-Protokoll anzuzeigen.</div>
+            </article>
+          </div>
+          <details class="raw-details"><summary>Vollständigen strukturierten Snapshot anzeigen</summary><pre id="raw-status"></pre></details>
+        </section>
+
+        <section id="view-telemetry" class="view">
+          <div class="split-layout telemetry-layout">
+            <article class="panel list-panel">
+              <div class="panel-head"><div><p class="eyebrow">CAPTURES</p><h2>Gespeicherte Telemetrie</h2></div><button id="telemetry-reload" class="text-button">Neu laden</button></div>
+              <div class="filter-row"><button class="chip active" data-telemetry-filter="all">Alle</button><button class="chip" data-telemetry-filter="posture">Posture</button><button class="chip" data-telemetry-filter="telemetry">Runtime</button></div>
+              <div id="telemetry-list" class="capture-list empty-state">Noch nicht geladen.</div>
+            </article>
+            <article class="panel document-panel">
+              <div class="panel-head"><div><p class="eyebrow" id="telemetry-kind">RAW DATA</p><h2 id="telemetry-title">Capture auswählen</h2></div><span id="telemetry-size" class="muted"></span></div>
+              <pre id="telemetry-document" class="document-view">Prozesse, Listener, TCP-Verbindungen, Persistenz und Sicherheitslogs erscheinen hier lesbar als unveränderte Collector-Ausgabe.</pre>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-files" class="view private-view">
+          <div class="private-gate"><div class="gate-icon">◇</div><h2>Private Datei-Inspektion ist gesperrt</h2><p>Entsperre bewusst für eine kurze Sitzung. Es wird vorher kein Home-Verzeichnis gescannt.</p><button class="button primary open-unlock">Kurz entsperren</button></div>
+          <div class="private-content hidden">
+            <article class="panel explorer-panel">
+              <div class="explorer-toolbar">
+                <button id="file-parent" class="icon-button" aria-label="Übergeordneter Ordner">←</button>
+                <form id="path-form" class="path-form"><input id="path-input" aria-label="Mac-Pfad" spellcheck="false"><button class="button" type="submit">Öffnen</button></form>
+                <label class="toggle"><input id="show-hidden" type="checkbox"><span></span>Versteckte</label>
+              </div>
+              <div class="selection-bar"><span><b id="selection-count">0</b> ausgewählt</span><div><button id="probe-selection" class="button" disabled>Größe prüfen</button><button id="export-selection" class="button primary" disabled>Export starten</button></div></div>
+              <div class="table-wrap"><table class="data-table file-table"><thead><tr><th class="check-cell"><input id="select-all-files" type="checkbox" aria-label="Alle auswählen"></th><th>Name</th><th>Typ</th><th>Größe</th><th>Geändert</th><th>Modus</th></tr></thead><tbody id="file-table-body"></tbody></table></div>
+              <div id="file-empty" class="empty-state hidden">Dieser Ordner ist leer.</div>
+              <div id="probe-result" class="probe-result hidden"></div>
+              <section id="file-preview" class="file-preview hidden" aria-live="polite">
+                <div class="file-preview-head"><div><b id="file-preview-name">Dateivorschau</b><small id="file-preview-meta"></small></div><button id="file-preview-close" class="text-button">Schließen</button></div>
+                <pre id="file-preview-content"></pre>
+              </section>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-safari" class="view private-view">
+          <div class="private-gate"><div class="gate-icon">◇</div><h2>Safari History ist gesperrt</h2><p>Die Live-Datenbank wird nicht verändert. Für die Abfrage entsteht nur ein konsistenter Read-only-Snapshot.</p><button class="button primary open-unlock">Kurz entsperren</button></div>
+          <div class="private-content hidden">
+            <article class="panel">
+              <div class="panel-head safari-head"><div><p class="eyebrow">ON-DEMAND INSPECTION</p><h2>Safari Verlauf</h2></div><form id="safari-form" class="inline-form"><label>Zeitraum<select id="safari-hours"><option value="6">6 Stunden</option><option value="24" selected>24 Stunden</option><option value="168">7 Tage</option><option value="720">30 Tage</option><option value="8760">1 Jahr</option></select></label><label>Limit<select id="safari-limit"><option>100</option><option selected>500</option><option>1000</option><option>5000</option></select></label><button class="button primary" type="submit">Abfragen</button></form></div>
+              <div class="search-row"><input id="safari-search" type="search" placeholder="Domain, Titel oder URL filtern"><span id="safari-summary" class="muted">Noch nicht abgefragt</span></div>
+              <div class="table-wrap"><table class="data-table"><thead><tr><th>Zeit</th><th>Domain</th><th>Titel</th><th>URL</th></tr></thead><tbody id="safari-table-body"></tbody></table></div>
+              <div id="safari-empty" class="empty-state">Abfrage bewusst starten.</div>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-exports" class="view private-view">
+          <div class="private-gate"><div class="gate-icon">◇</div><h2>Exportbereich ist gesperrt</h2><p>Archive enthalten private Daten und bleiben deshalb hinter derselben kurzen Freigabe.</p><button class="button primary open-unlock">Kurz entsperren</button></div>
+          <div class="private-content hidden">
+            <div class="overview-grid">
+              <article class="panel span-2"><div class="panel-head"><div><p class="eyebrow">JOBS</p><h2>Ausgewählte Exporte</h2><p class="panel-note">Ein Exportpfad nach dem anderen · niedrig priorisiert und gedrosselt · Speicherreserve wird geprüft · läuft auch nach Ansichtssperre weiter</p></div><button id="jobs-reload" class="text-button">Aktualisieren</button></div><div id="export-jobs" class="job-list empty-state" aria-label="Exportjobs">Keine Jobs in dieser Sitzung.</div></article>
+              <article class="panel span-2"><div class="panel-head"><div><p class="eyebrow">CONTROL NODE STORAGE</p><h2>Verfügbare Archive</h2></div><button id="archives-reload" class="text-button">Aktualisieren</button></div><div id="archive-list" class="archive-list empty-state">Noch nicht geladen.</div></article>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="unlock-dialog" class="modal">
+    <form id="unlock-form" method="dialog">
+      <div class="modal-head"><div><p class="eyebrow">STEP-UP AUTHORIZATION</p><h2>Private Daten entsperren</h2></div><button id="unlock-close" class="icon-button" value="cancel" formnovalidate aria-label="Schließen">×</button></div>
+      <p>Die Freigabe gilt maximal <b id="unlock-minutes">10 Minuten</b>. Das Dashboard-Passwort wird nur verifiziert, nicht gespeichert. Das Mac-Adminpasswort wird hier bewusst nicht übertragen.</p>
+      <label>Dashboard-Passwort<input id="unlock-password" type="password" autocomplete="current-password" required></label>
+      <p id="unlock-error" class="form-error" role="alert"></p>
+      <div class="modal-actions"><button class="button" value="cancel" formnovalidate>Abbrechen</button><button class="button primary" value="default" type="submit">Jetzt entsperren</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

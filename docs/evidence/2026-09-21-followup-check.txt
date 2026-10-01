@@ -1,0 +1,72 @@
+Command: make check
+ShellCheck 0.11.0; Go 1.26.8; prepared dependencies, downloads disabled
+
+cd client && go test ./...
+?   	plntir/client/cmd/plntir-web	[no test files]
+?   	plntir/client/cmd/plntirctl	[no test files]
+ok  	plntir/client/internal/collector	(cached)
+ok  	plntir/client/internal/config	(cached)
+ok  	plntir/client/internal/status	(cached)
+ok  	plntir/client/internal/ui	(cached)
+ok  	plntir/client/internal/webconsole	(cached)
+cd client && go vet ./...
+cd core && go test ./...
+?   	plntir/core/cmd/plntir-core	[no test files]
+?   	plntir/core/cmd/plntir-kms-broker	[no test files]
+?   	plntir/core/cmd/plntir-lambda-pack	[no test files]
+?   	plntir/core/cmd/plntir-scan-result-broker	[no test files]
+ok  	plntir/core/internal/access	(cached)
+ok  	plntir/core/internal/aianalyzer	(cached)
+ok  	plntir/core/internal/airunner	(cached)
+ok  	plntir/core/internal/aitelemetry	(cached)
+ok  	plntir/core/internal/config	(cached)
+ok  	plntir/core/internal/domain	(cached)
+ok  	plntir/core/internal/envelope	(cached)
+ok  	plntir/core/internal/filecrypto	(cached)
+ok  	plntir/core/internal/httpapi	(cached)
+ok  	plntir/core/internal/idgen	(cached)
+ok  	plntir/core/internal/kmsbroker	(cached)
+ok  	plntir/core/internal/lambdapack	(cached)
+ok  	plntir/core/internal/scanmeta	(cached)
+ok  	plntir/core/internal/scanresult	(cached)
+ok  	plntir/core/internal/scanresultbroker	(cached)
+ok  	plntir/core/internal/scanresultconsumer	(cached)
+ok  	plntir/core/internal/shadow	(cached)
+ok  	plntir/core/internal/store/sqlite	(cached)
+ok  	plntir/core/internal/wazuhintegrity	(cached)
+cd core && go vet ./...
+./tests/openapi-contract-checks.py
+PASS OpenAPI mutation guards (38 operations)
+PASS no shell, terminal, or bulk-wipe route
+python3 ./tests/fleet-ingress-checks.py
+test_cloudflared_file_is_generated_and_has_no_broad_rule (__main__.FleetIngressPolicyTests.test_cloudflared_file_is_generated_and_has_no_broad_rule) ... ok
+test_every_declared_route_and_query_is_allowed (__main__.FleetIngressPolicyTests.test_every_declared_route_and_query_is_allowed) ... ok
+test_exact_reviewed_route_set (__main__.FleetIngressPolicyTests.test_exact_reviewed_route_set) ... ok
+test_interactive_and_disabled_feature_routes_are_denied (__main__.FleetIngressPolicyTests.test_interactive_and_disabled_feature_routes_are_denied) ... ok
+test_method_host_and_path_confusion_are_denied (__main__.FleetIngressPolicyTests.test_method_host_and_path_confusion_are_denied) ... ok
+test_policy_mutations_fail_closed (__main__.FleetIngressPolicyTests.test_policy_mutations_fail_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.001s
+
+OK
+bash ./tests/required-tools-checks.sh
+PASS: static and package checks fail explicitly when ripgrep is missing.
+python3 ./tests/readiness-disabled-checks.py
+PASS: 12 readiness guard cases; no services were queried or changed.
+./tests/static-checks.sh
+Static checks passed.
+./tests/dscl-output-checks.sh
+dscl output checks passed.
+./tests/integrity-checks.sh
+Integrity checks passed.
+./tests/offhost-backup-checks.sh
+Off-host backup checks passed.
+./tests/web-dashboard-checks.sh
+Web dashboard Mac data checks passed.
+Web dashboard checks passed.
+./tests/package-build-checks.sh
+plntir-platform-update.tar.gz: OK
+Package build checks passed.
+
+Exit: 0

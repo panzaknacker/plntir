@@ -1,0 +1,178 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+
+readonly DEFAULT_STATE_DIR='/Library/Application Support/Plntir/Integrity'
+readonly STATE_DIR=${PLNTIR_INTEGRITY_STATE_DIR:-${DEFAULT_STATE_DIR}}
+readonly MANIFEST=${PLNTIR_INTEGRITY_MANIFEST:-${STATE_DIR}/baseline.tsv}
+readonly STATUS_FILE=${STATE_DIR}/status.env
+readonly DRIFT_FILE=${STATE_DIR}/drift.tsv
+readonly RELEASE_FILE=${STATE_DIR}/release-id
+readonly TEST_ROOT=${PLNTIR_INTEGRITY_TEST_ROOT:-}
+readonly TESTING=${PLNTIR_INTEGRITY_TESTING:-0}
+
+if [[ $# -gt 1 || ($# -eq 1 && $1 != --check) ]]; then
+    printf 'usage: %s [--check]\n' "$0" >&2
+    exit 64
+fi
+
+os_name=$(/usr/bin/uname -s)
+if [[ ${TESTING} == 1 ]]; then
+    [[ -n ${TEST_ROOT} && -d ${TEST_ROOT} && ! -L ${TEST_ROOT} ]] || exit 77
+else
+    [[ ${EUID} -eq 0 && ${os_name} == Darwin ]] || {
+        printf 'The production integrity check requires root on macOS.\n' >&2
+        exit 77
+    }
+    [[ ${STATE_DIR} == "${DEFAULT_STATE_DIR}" ]] || exit 77
+fi
+
+if [[ -L ${STATE_DIR} || ! -d ${STATE_DIR} ]]; then
+    printf 'Unsafe or missing Plntir integrity state directory.\n' >&2
+    exit 77
+fi
+if [[ -L ${MANIFEST} || ! -f ${MANIFEST} ]]; then
+    printf 'Unsafe or missing Plntir integrity baseline.\n' >&2
+    exit 66
+fi
+
+if [[ ${TESTING} != 1 ]]; then
+    [[ $(/usr/bin/stat -f '%Su:%Sg:%Lp' "${STATE_DIR}") == root:wheel:755 ]] || exit 77
+    [[ $(/usr/bin/stat -f '%Su:%Sg:%Lp' "${MANIFEST}") == root:wheel:600 ]] || exit 77
+fi
+
+metadata_for() {
+    local path=$1
+    if [[ ${os_name} == Darwin ]]; then
+        /usr/bin/stat -f '%Lp	%Su	%Sg' "${path}"
+    elif [[ ${TESTING} == 1 ]]; then
+        /usr/bin/stat -c '%a	%U	%G' "${path}"
+    else
+        return 69
+    fi
+}
+
+hash_for() {
+    local path=$1
+    if [[ ${os_name} == Darwin ]]; then
+        /usr/bin/shasum -a 256 "${path}" | /usr/bin/awk '{print $1}'
+    elif [[ ${TESTING} == 1 ]]; then
+        /usr/bin/sha256sum "${path}" | /usr/bin/awk '{print $1}'
+    else
+        return 69
+    fi
+}
+
+allowed_path() {
+    local path=$1
+    if [[ ${TESTING} == 1 ]]; then
+        [[ ${path} == "${TEST_ROOT}/"* ]]
+        return
+    fi
+    case ${path} in
+    /usr/local/libexec/plntir-* | \
+        /etc/ssh/sshd_config.d/90-plntir.conf | \
+        /etc/sudoers.d/90-plntir | \
+        /etc/sudoers.d/91-plntir-secure-archive | \
+        /Library/LaunchDaemons/com.plntir.endpoint-integrity.plist)
+        return 0
+        ;;
+    esac
+    [[ ${path} =~ ^/Users/[A-Za-z0-9._-]+/[.]ssh/authorized_keys$ ]]
+}
+
+release_id=unknown
+if [[ -f ${RELEASE_FILE} && ! -L ${RELEASE_FILE} ]]; then
+    release_candidate=$(/usr/bin/head -n 1 "${RELEASE_FILE}" | /usr/bin/tr -cd 'A-Za-z0-9._-')
+    [[ -n ${release_candidate} ]] && release_id=${release_candidate}
+fi
+
+previous_state=unknown
+if [[ -f ${STATUS_FILE} && ! -L ${STATUS_FILE} ]]; then
+    previous_state=$(/usr/bin/sed -n 's/^integrity_state=//p' "${STATUS_FILE}" | /usr/bin/head -n 1)
+fi
+
+tmp_drift=${STATE_DIR}/.drift.$$
+tmp_status=${STATE_DIR}/.status.$$
+cleanup() {
+    /bin/rm -f "${tmp_drift}" "${tmp_status}"
+}
+trap cleanup EXIT
+: >"${tmp_drift}"
+
+checked=0
+drift_count=0
+manifest_error=false
+while IFS=$'\t' read -r expected_hash expected_mode expected_owner expected_group protected_path recovery_path ||
+    [[ -n ${expected_hash:-}${expected_mode:-}${expected_owner:-}${expected_group:-}${protected_path:-}${recovery_path:-} ]]; do
+    if [[ ! ${expected_hash:-} =~ ^[a-f0-9]{64}$ ||
+        ! ${expected_mode:-} =~ ^[0-7]{3,4}$ ||
+        ! ${expected_owner:-} =~ ^[A-Za-z0-9._-]+$ ||
+        ! ${expected_group:-} =~ ^[A-Za-z0-9._-]+$ ||
+        -z ${protected_path:-} ||
+        ! ${recovery_path:-} =~ ^files/[0-9]{4}$ ]] ||
+        ! allowed_path "${protected_path}"; then
+        manifest_error=true
+        /usr/bin/printf 'unsafe_manifest_entry\t-\n' >>"${tmp_drift}"
+        drift_count=$((drift_count + 1))
+        continue
+    fi
+    checked=$((checked + 1))
+    if [[ -L ${protected_path} || ! -f ${protected_path} ]]; then
+        /usr/bin/printf 'missing_or_unsafe_type\t%s\n' "${protected_path}" >>"${tmp_drift}"
+        drift_count=$((drift_count + 1))
+        continue
+    fi
+    actual_hash=$(hash_for "${protected_path}")
+    actual_metadata=$(metadata_for "${protected_path}")
+    IFS=$'\t' read -r actual_mode actual_owner actual_group <<<"${actual_metadata}"
+    if [[ ${actual_hash} != "${expected_hash}" ]]; then
+        /usr/bin/printf 'content_hash\t%s\n' "${protected_path}" >>"${tmp_drift}"
+        drift_count=$((drift_count + 1))
+    elif [[ ${actual_mode} != "${expected_mode}" ||
+        ${actual_owner} != "${expected_owner}" ||
+        ${actual_group} != "${expected_group}" ]]; then
+        /usr/bin/printf 'metadata\t%s\n' "${protected_path}" >>"${tmp_drift}"
+        drift_count=$((drift_count + 1))
+    fi
+done <"${MANIFEST}"
+
+if [[ ${checked} -eq 0 ]]; then
+    manifest_error=true
+    drift_count=$((drift_count + 1))
+    /usr/bin/printf 'empty_manifest\t-\n' >>"${tmp_drift}"
+fi
+
+state=healthy
+if [[ ${manifest_error} == true ]]; then
+    state=error
+elif [[ ${drift_count} -gt 0 ]]; then
+    state=drift
+fi
+checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+baseline_sha256=$(hash_for "${MANIFEST}")
+{
+    printf 'integrity_state=%s\n' "${state}"
+    printf 'integrity_mode=alert-only\n'
+    printf 'integrity_checked_at=%s\n' "${checked_at}"
+    printf 'integrity_release=%s\n' "${release_id}"
+    printf 'integrity_checked_files=%d\n' "${checked}"
+    printf 'integrity_drift_count=%d\n' "${drift_count}"
+    printf 'integrity_baseline_sha256=%s\n' "${baseline_sha256}"
+} >"${tmp_status}"
+/bin/chmod 0600 "${tmp_drift}"
+/bin/chmod 0644 "${tmp_status}"
+/bin/mv -f "${tmp_drift}" "${DRIFT_FILE}"
+/bin/mv -f "${tmp_status}" "${STATUS_FILE}"
+
+if [[ ${state} != "${previous_state}" ]]; then
+    /usr/bin/logger -t com.plntir.endpoint-integrity \
+        "state changed: ${previous_state:-unknown} -> ${state}; drift_count=${drift_count}; mode=alert-only"
+fi
+
+# drift is an observed state, not a crashed job. a malformed baseline remains a
+# service error so launchd and the external monitor can distinguish the cases.
+[[ ${state} != error ]]

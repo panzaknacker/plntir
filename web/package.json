@@ -1,0 +1,25 @@
+{
+  "name": "@plntir/web",
+  "version": "0.1.0-shadow",
+  "private": true,
+  "workspaces": [
+    "admin",
+    "fileshare"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @plntir/admin && npm run build --workspace @plntir/fileshare",
+    "check": "npm run check --workspace @plntir/admin && npm run check --workspace @plntir/fileshare"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "2.10.6",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/preact": "3.2.4",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

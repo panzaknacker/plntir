@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+
+readonly CONFIG_FILE=${PLNTIR_BACKUP_CONFIG_FILE:-/etc/plntir/control-plane-backup.env}
+readonly RECIPIENT_FILE=${PLNTIR_BACKUP_RECIPIENT_FILE:-/etc/plntir/control-plane-backup-recipient.txt}
+readonly SOURCE_ROOT=${PLNTIR_BACKUP_SOURCE_ROOT:-/}
+readonly STATE_DIR=${PLNTIR_BACKUP_STATE_DIR:-/var/lib/plntir/backup}
+
+usage() {
+    printf 'usage: %s --upload | --local-output OUTPUT_DIR | --validate-config\n' "$0" >&2
+}
+
+[[ $# -ge 1 ]] || {
+    usage
+    exit 64
+}
+readonly ACTION=$1
+case ${ACTION} in
+--upload | --validate-config)
+    [[ $# -eq 1 ]] || {
+        usage
+        exit 64
+    }
+    ;;
+--local-output)
+    [[ $# -eq 2 ]] || {
+        usage
+        exit 64
+    }
+    readonly LOCAL_OUTPUT=$2
+    ;;
+*)
+    usage
+    exit 64
+    ;;
+esac
+
+if [[ ${SOURCE_ROOT} == / ]]; then
+    [[ ${EUID} -eq 0 ]] || {
+        printf 'Production backup must run as root.\n' >&2
+        exit 77
+    }
+else
+    [[ ${PLNTIR_BACKUP_TESTING:-0} == 1 && -d ${SOURCE_ROOT} && ! -L ${SOURCE_ROOT} ]] || {
+        printf 'A non-root source is accepted only during explicit tests.\n' >&2
+        exit 77
+    }
+fi
+
+for tool in /usr/bin/age /usr/bin/curl /usr/bin/sha256sum /usr/bin/tar; do
+    [[ -x ${tool} ]] || {
+        printf 'Required backup tool is missing: %s\n' "${tool}" >&2
+        exit 69
+    }
+done
+
+if [[ -L ${RECIPIENT_FILE} || ! -f ${RECIPIENT_FILE} ]]; then
+    printf 'Unsafe or missing age recipient file.\n' >&2
+    exit 66
+fi
+recipient=$(/bin/sed -n '/^[[:space:]]*#/d; /^[[:space:]]*$/d; p' "${RECIPIENT_FILE}")
+[[ ${recipient} =~ ^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$ ]] || {
+    printf 'Invalid age recipient.\n' >&2
+    exit 65
+}
+readonly recipient
+
+R2_ACCOUNT_ID=''
+R2_BUCKET=''
+R2_JURISDICTION=''
+R2_ACCESS_KEY_ID=''
+R2_SECRET_ACCESS_KEY=''
+
+load_config() {
+    local line key value
+    local seen_account=false seen_bucket=false seen_jurisdiction=false
+    local seen_access=false seen_secret=false
+
+    [[ -f ${CONFIG_FILE} && ! -L ${CONFIG_FILE} ]] || {
+        printf 'Unsafe or missing backup configuration.\n' >&2
+        return 66
+    }
+    if [[ ${SOURCE_ROOT} == / ]]; then
+        [[ $(/usr/bin/stat -c '%U:%G:%a' "${CONFIG_FILE}") == root:root:600 ]] || {
+            printf 'Backup configuration must be root:root mode 0600.\n' >&2
+            return 77
+        }
+    fi
+    while IFS= read -r line || [[ -n ${line} ]]; do
+        [[ -z ${line} || ${line} == \#* ]] && continue
+        [[ ${line} == *=* ]] || {
+            printf 'Malformed backup configuration line.\n' >&2
+            return 65
+        }
+        key=${line%%=*}
+        value=${line#*=}
+        [[ -n ${value} && ${value} != *[[:space:]]* ]] || {
+            printf 'Unsafe empty or whitespace-containing backup value for %s.\n' "${key}" >&2
+            return 65
+        }
+        case ${key} in
+        R2_ACCOUNT_ID)
+            [[ ${seen_account} == false ]] || {
+                printf 'Duplicate backup configuration key: %s\n' "${key}" >&2
+                return 65
+            }
+            seen_account=true
+            R2_ACCOUNT_ID=${value}
+            ;;
+        R2_BUCKET)
+            [[ ${seen_bucket} == false ]] || {
+                printf 'Duplicate backup configuration key: %s\n' "${key}" >&2
+                return 65
+            }
+            seen_bucket=true
+            R2_BUCKET=${value}
+            ;;
+        R2_JURISDICTION)
+            [[ ${seen_jurisdiction} == false ]] || {
+                printf 'Duplicate backup configuration key: %s\n' "${key}" >&2
+                return 65
+            }
+            seen_jurisdiction=true
+            R2_JURISDICTION=${value}
+            ;;
+        R2_ACCESS_KEY_ID)
+            [[ ${seen_access} == false ]] || {
+                printf 'Duplicate backup configuration key: %s\n' "${key}" >&2
+                return 65
+            }
+            seen_access=true
+            R2_ACCESS_KEY_ID=${value}
+            ;;
+        R2_SECRET_ACCESS_KEY)
+            [[ ${seen_secret} == false ]] || {
+                printf 'Duplicate backup configuration key: %s\n' "${key}" >&2
+                return 65
+            }
+            seen_secret=true
+            R2_SECRET_ACCESS_KEY=${value}
+            ;;
+        *)
+            printf 'Unknown backup configuration key: %s\n' "${key}" >&2
+            return 65
+            ;;
+        esac
+    done <"${CONFIG_FILE}"
+
+    [[ ${R2_ACCOUNT_ID} =~ ^[a-f0-9]{32}$ ]] || return 65
+    [[ ${R2_BUCKET} =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || return 65
+    [[ ${R2_JURISDICTION} =~ ^(default|eu|us)$ ]] || return 65
+    [[ ${R2_ACCESS_KEY_ID} =~ ^[A-Za-z0-9]{16,128}$ ]] || return 65
+    [[ ${R2_SECRET_ACCESS_KEY} =~ ^[A-Za-z0-9]{32,128}$ ]] || return 65
+}
+
+write_status() {
+    local state=$1
+    local stage=$2
+    local status_archive=${3:-}
+    local status_object=${4:-}
+    local status_sha256=${5:-}
+    local status_bytes=${6:-0}
+    local now tmp
+    now=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+    tmp=${STATE_DIR}/.status.$$
+    /usr/bin/printf \
+        '{"schema_version":1,"state":"%s","stage":"%s","checked_at":"%s","archive":"%s","object_key":"%s","sha256":"%s","bytes":%s}\n' \
+        "${state}" "${stage}" "${now}" "${status_archive}" "${status_object}" "${status_sha256}" "${status_bytes}" >"${tmp}"
+    /bin/chmod 0640 "${tmp}"
+    /bin/mv -f "${tmp}" "${STATE_DIR}/status.json"
+}
+
+if [[ -L ${STATE_DIR} || (-e ${STATE_DIR} && ! -d ${STATE_DIR}) ]]; then
+    printf 'Unsafe backup state directory.\n' >&2
+    exit 77
+fi
+/usr/bin/install -d -m 0700 "${STATE_DIR}"
+
+if [[ ${ACTION} == --upload || ${ACTION} == --validate-config ]]; then
+    load_config || {
+        printf 'Backup configuration validation failed.\n' >&2
+        exit 65
+    }
+fi
+if [[ ${ACTION} == --validate-config ]]; then
+    printf 'Plntir off-host backup configuration is valid.\n'
+    exit 0
+fi
+
+required_paths=(
+    etc/plntir
+    opt/plntir
+    var/lib/plntir/monitor
+)
+optional_paths=(
+    etc/apt/apt.conf.d
+    etc/cloudflared
+    etc/fail2ban
+    etc/nftables.conf
+    etc/ssh
+    etc/sudoers.d
+    etc/sysctl.d
+    etc/systemd/system
+    home/admin/.cloudflared
+    home/admin/.ssh
+    var/lib/cloudflare-warp
+    var/lib/plntir/archive-gnupg
+    var/lib/plntir/git
+    var/lib/plntir-web
+)
+selected_paths=()
+for relative in "${required_paths[@]}"; do
+    source_path=${SOURCE_ROOT%/}/${relative}
+    [[ -e ${source_path} && ! -L ${source_path} ]] || {
+        printf 'Required backup source is missing or unsafe: /%s\n' "${relative}" >&2
+        exit 66
+    }
+    selected_paths+=("${relative}")
+done
+for relative in "${optional_paths[@]}"; do
+    source_path=${SOURCE_ROOT%/}/${relative}
+    if [[ -e ${source_path} && ! -L ${source_path} ]]; then
+        selected_paths+=("${relative}")
+    fi
+done
+
+timestamp=$(/bin/date -u +%Y%m%dT%H%M%SZ)
+readonly timestamp
+hostname_value=$(/usr/bin/uname -n | /usr/bin/tr -cd 'A-Za-z0-9._-')
+[[ -n ${hostname_value} ]] || hostname_value=unknown
+readonly hostname_value
+archive_name=plntir-control-plane-${hostname_value}-${timestamp}.tar.gz.age
+readonly archive_name
+
+workdir=$(/usr/bin/mktemp -d "${STATE_DIR}/.backup.XXXXXX")
+cleanup() {
+    case ${workdir} in
+    "${STATE_DIR}"/.backup.*)
+        /bin/rm -rf "${workdir}"
+        ;;
+    *)
+        printf 'Refusing unsafe backup temporary cleanup.\n' >&2
+        ;;
+    esac
+}
+trap cleanup EXIT
+/usr/bin/install -d -m 0700 "${workdir}/metadata"
+path_list=${workdir}/metadata/path-list.txt
+/usr/bin/printf '%s\n' "${selected_paths[@]}" >"${path_list}"
+
+source_revision=unknown
+if [[ -r ${SOURCE_ROOT%/}/etc/plntir/source-revision ]]; then
+    candidate_revision=$(/usr/bin/head -n 1 "${SOURCE_ROOT%/}/etc/plntir/source-revision" | /usr/bin/tr -cd 'A-Za-z0-9._-')
+    [[ -n ${candidate_revision} ]] && source_revision=${candidate_revision}
+fi
+/usr/bin/printf \
+    '{"schema_version":1,"created_at":"%s","hostname":"%s","source_revision":"%s","encryption":"age-x25519","scope":"plntir-control-plane-no-user-content"}\n' \
+    "${timestamp}" "${hostname_value}" "${source_revision}" \
+    >"${workdir}/metadata/manifest.json"
+
+encrypted_tmp=${workdir}/${archive_name}
+/usr/bin/tar --acls --xattrs --numeric-owner -czf - \
+    -C "${SOURCE_ROOT}" --files-from="${path_list}" \
+    -C "${workdir}" metadata |
+    /usr/bin/age -r "${recipient}" -o "${encrypted_tmp}"
+[[ -s ${encrypted_tmp} ]] || {
+    printf 'Encrypted backup is empty.\n' >&2
+    exit 74
+}
+sha256=$(/usr/bin/sha256sum "${encrypted_tmp}" | /usr/bin/awk '{print $1}')
+bytes=$(/usr/bin/stat -c %s "${encrypted_tmp}")
+readonly sha256 bytes
+sidecar=${workdir}/${archive_name}.sha256
+/usr/bin/printf '%s  %s\n' "${sha256}" "${archive_name}" >"${sidecar}"
+
+if [[ ${ACTION} == --local-output ]]; then
+    [[ -d ${LOCAL_OUTPUT} && ! -L ${LOCAL_OUTPUT} ]] || {
+        printf 'Local output directory is missing or unsafe.\n' >&2
+        exit 66
+    }
+    /usr/bin/install -m 0600 "${encrypted_tmp}" "${LOCAL_OUTPUT}/${archive_name}"
+    /usr/bin/install -m 0644 "${sidecar}" "${LOCAL_OUTPUT}/${archive_name}.sha256"
+    write_status complete local "${archive_name}" '' "${sha256}" "${bytes}"
+    printf 'Encrypted local backup: %s\n' "${LOCAL_OUTPUT}/${archive_name}"
+    exit 0
+fi
+
+case ${R2_JURISDICTION} in
+default)
+    endpoint=https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+    ;;
+eu | us)
+    endpoint=https://${R2_ACCOUNT_ID}.${R2_JURISDICTION}.r2.cloudflarestorage.com
+    ;;
+esac
+readonly endpoint
+year=${timestamp:0:4}
+month=${timestamp:4:2}
+object_key=snapshots/control-node/${year}/${month}/${archive_name}
+readonly object_key
+
+curl_config=${workdir}/curl.conf
+{
+    printf 'aws-sigv4 = "aws:amz:auto:s3"\n'
+    printf 'user = "%s:%s"\n' "${R2_ACCESS_KEY_ID}" "${R2_SECRET_ACCESS_KEY}"
+    printf 'fail-with-body\n'
+    printf 'silent\n'
+    printf 'show-error\n'
+} >"${curl_config}"
+/bin/chmod 0600 "${curl_config}"
+
+write_status running upload "${archive_name}" "${object_key}" "${sha256}" "${bytes}"
+for upload in "${encrypted_tmp}" "${sidecar}"; do
+    suffix=''
+    [[ ${upload} == "${sidecar}" ]] && suffix=.sha256
+    /usr/bin/curl --config "${curl_config}" \
+        --header 'If-None-Match: *' \
+        --upload-file "${upload}" \
+        "${endpoint}/${R2_BUCKET}/${object_key}${suffix}"
+done
+
+verify_archive=${workdir}/verify.age
+verify_sidecar=${workdir}/verify.sha256
+/usr/bin/curl --config "${curl_config}" \
+    --output "${verify_archive}" \
+    "${endpoint}/${R2_BUCKET}/${object_key}"
+/usr/bin/curl --config "${curl_config}" \
+    --output "${verify_sidecar}" \
+    "${endpoint}/${R2_BUCKET}/${object_key}.sha256"
+/usr/bin/grep -Eq "^${sha256}[[:space:]]{2}${archive_name}$" "${verify_sidecar}"
+[[ $(/usr/bin/sha256sum "${verify_archive}" | /usr/bin/awk '{print $1}') == "${sha256}" ]]
+
+write_status complete verified-upload "${archive_name}" "${object_key}" "${sha256}" "${bytes}"
+/usr/bin/logger -t plntir-control-plane-backup \
+    "verified encrypted off-host snapshot ${object_key} (${bytes} bytes)"
+printf 'Verified R2 backup: %s/%s/%s\n' "${R2_BUCKET}" "${object_key}" "${sha256}"

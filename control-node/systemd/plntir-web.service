@@ -1,0 +1,43 @@
+[Unit]
+Description=Plntir private Mesh operations console
+Documentation=file:/opt/plntir/share/docs/plntir-web-dashboard.md
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=plntirweb
+Group=plntirweb
+SupplementaryGroups=plntircontrol
+ExecStart=/opt/plntir/bin/plntir-web serve --config /etc/plntir/web-console.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+
+AmbientCapabilities=
+DevicePolicy=closed
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=false
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/etc/plntir /var/lib/plntir /home/admin/.ssh
+ReadWritePaths=/var/lib/plntir-web /var/lib/plntir/monitor /var/lib/plntir/retrieved
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

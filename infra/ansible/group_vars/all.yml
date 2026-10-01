@@ -1,0 +1,35 @@
+---
+# both switches are false by default. check mode and apply each require their
+# own immediate approval reference; this repository provides no apply wrapper.
+plntir_deployment_authorized: false
+plntir_check_mode_authorized: false
+plntir_immediate_approval_reference: ""
+plntir_release_id: ""
+
+plntir_region: eu-central-1
+plntir_forbidden_watch_arn: arn:aws:lightsail:eu-central-1:444455556666:Instance/e40d6806-5f0b-4cfd-8ee9-36ac8f5af13d
+plntir_bootstrap_access_retained: true
+plntir_ssh_ca_public_key: ""
+plntir_admin_user: plntir-admin
+
+plntir_expected_architecture: x86_64
+plntir_journal_max_use: 128M
+plntir_journal_keep_free: 128M
+plntir_enable_docker: false
+plntir_extra_packages: []
+
+plntir_tunnel_connector_ipv4: []
+plntir_tunnel_connector_ipv6: []
+plntir_relay_ipv4: []
+plntir_relay_ipv6: []
+plntir_managed_agent_ipv4: []
+plntir_managed_agent_ipv6: []
+
+plntir_input_tcp_rules: []
+plntir_docker_tcp_rules: []
+plntir_output_policy: accept
+plntir_output_tcp_rules: []
+plntir_output_udp_rules: []
+plntir_docker_internal_interfaces: []
+plntir_docker_egress_interfaces: []
+plntir_external_interfaces: []

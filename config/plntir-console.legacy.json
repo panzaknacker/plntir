@@ -1,0 +1,11 @@
+{
+  "host": "192.0.2.10",
+  "port": 22,
+  "user": "admin",
+  "identity_file": "../secrets/plntir_control_node_access.pem",
+  "known_hosts_file": "../secrets/plntir_control_node_known_hosts",
+  "refresh_seconds": 10,
+  "connect_timeout_seconds": 12,
+  "timezone": "Europe/Berlin",
+  "collector_mode": "legacy-script"
+}

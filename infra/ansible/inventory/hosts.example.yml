@@ -1,0 +1,50 @@
+---
+# copy to the gitignored inventory/hosts.yml only after compute exists. every
+# address must be a private address; authentication is supplied out of band.
+all:
+  vars:
+    ansible_user: ubuntu
+    plntir_tunnel_connector_ipv4:
+      - REPLACE_EDGE_PRIVATE_IPV4
+      - REPLACE_RELAY_PRIVATE_IPV4
+    plntir_tunnel_connector_ipv6: []
+    plntir_relay_ipv4:
+      - REPLACE_RELAY_PRIVATE_IPV4
+    plntir_relay_ipv6: []
+    plntir_managed_agent_ipv4:
+      - REPLACE_CORE_PRIVATE_IPV4
+      - REPLACE_MDM_PRIVATE_IPV4
+      - REPLACE_EDGE_PRIVATE_IPV4
+      - REPLACE_RELAY_PRIVATE_IPV4
+      - REPLACE_MAC_WARP_IPV4
+    plntir_managed_agent_ipv6: []
+  children:
+    plntir_v1:
+      children:
+        core:
+          hosts:
+            plntir-core-01:
+              ansible_host: REPLACE_CORE_PRIVATE_IPV4
+              plntir_aws_resource_arn: REPLACE_CORE_LIGHTSAIL_ARN
+        mdm:
+          hosts:
+            plntir-mdm-01:
+              ansible_host: REPLACE_MDM_PRIVATE_IPV4
+              plntir_aws_resource_arn: REPLACE_MDM_LIGHTSAIL_ARN
+              plntir_external_interfaces:
+                - REPLACE_MDM_PRIMARY_INTERFACE
+        edge:
+          hosts:
+            plntir-edge-01:
+              ansible_host: REPLACE_EDGE_PRIVATE_IPV4
+              plntir_aws_resource_arn: REPLACE_EDGE_LIGHTSAIL_ARN
+        relay:
+          hosts:
+            plntir-relay-01:
+              ansible_host: REPLACE_RELAY_PRIVATE_IPV4
+              plntir_aws_resource_arn: REPLACE_RELAY_EC2_ARN
+        siem:
+          hosts:
+            plntir-siem-01:
+              ansible_host: REPLACE_SIEM_PRIVATE_IPV4
+              plntir_aws_resource_arn: REPLACE_SIEM_LIGHTSAIL_ARN

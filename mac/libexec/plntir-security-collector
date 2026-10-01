@@ -1,0 +1,67 @@
+#!/bin/sh
+set -u
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/libexec
+export PATH LC_ALL=C
+
+section() {
+    printf '\n### %s\n' "$1"
+}
+
+mode=${1:-}
+case "$mode" in
+posture)
+    section IDENTITY
+    date -u +%Y-%m-%dT%H:%M:%SZ
+    hostname
+    sw_vers
+    uname -m
+    uptime
+    printf 'console_user='
+    stat -f %Su /dev/console
+
+    section SECURITY
+    csrutil status 2>&1 || true
+    spctl --status 2>&1 || true
+    /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1 || true
+    /usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode 2>&1 || true
+    systemsetup -getremotelogin 2>&1 || true
+    profiles status -type enrollment 2>&1 || true
+
+    section ACCOUNTS
+    dscl . -read /Groups/admin GroupMembership 2>&1 || true
+    dscl . -list /Users UniqueID 2>&1 || true
+
+    section NETWORK
+    ifconfig utun0 2>&1 || true
+    route -n get default 2>&1 || true
+
+    section SYSTEM_EXTENSIONS
+    systemextensionsctl list 2>&1 || true
+    ;;
+telemetry)
+    section TIME
+    date -u +%Y-%m-%dT%H:%M:%SZ
+
+    section PROCESSES
+    ps -axo pid=,ppid=,uid=,user=,etime=,comm= 2>&1 || true
+
+    section LISTENERS
+    lsof -nP -iTCP -sTCP:LISTEN 2>&1 || true
+
+    section TCP_CONNECTIONS
+    netstat -anv -p tcp 2>&1 | head -n 500 || true
+
+    section PERSISTENCE
+    find /Library/LaunchDaemons /Library/LaunchAgents \
+        -maxdepth 1 -type f -print -exec shasum -a 256 {} \; 2>&1 || true
+
+    section RECENT_SECURITY_LOG
+    log show --last 5m --style compact \
+        --predicate '(process == "sudo") OR (process == "sshd") OR (process == "authd") OR (subsystem BEGINSWITH "com.apple.security")' \
+        2>&1 | tail -n 1000 || true
+    ;;
+*)
+    echo "usage: plntir-security-collector posture|telemetry" >&2
+    exit 64
+    ;;
+esac

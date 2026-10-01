@@ -1,0 +1,82 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "plntir-scanner",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "limits": {
+    "cpu_ms": 300000
+  },
+  "vars": {
+    "EXPECTED_ACCOUNT_ID": "SET_AT_PRODUCTION_SEAL",
+    "EXPECTED_BUCKET": "plntir-files",
+    "CORE_EVENT_VERIFY_KEY": "SET_AT_PRODUCTION_SEAL",
+    "KMS_BROKER_URL": "https://kms-broker.invalid/v1/rewrap",
+    "RESULT_BROKER_URL": "https://scan-results.invalid/v1/results"
+  },
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "plntir-files"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "plntir-scan-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 8,
+        "retry_delay": 30,
+        "dead_letter_queue": "plntir-scan-dead-letter"
+      }
+    ]
+  },
+  "workflows": [
+    {
+      "name": "plntir-scan",
+      "binding": "SCAN_WORKFLOW",
+      "class_name": "ScanWorkflow"
+    }
+  ],
+  "mtls_certificates": [
+    {
+      "binding": "KMS_BROKER_MTLS",
+      "certificate_id": "00000000000000000000000000000000"
+    },
+    {
+      "binding": "RESULT_BROKER_MTLS",
+      "certificate_id": "00000000000000000000000000000000"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCANNERS",
+        "class_name": "ScannerContainer"
+      }
+    ]
+  },
+  "containers": [
+    {
+      "class_name": "ScannerContainer",
+      "image": "./container/Dockerfile",
+      "max_instances": 4
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ScannerContainer"]
+    }
+  ]
+}

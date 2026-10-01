@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule daily Plntir encrypted off-host backup
+
+[Timer]
+OnCalendar=*-*-* 03:37:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+Unit=plntir-control-plane-backup.service
+
+[Install]
+WantedBy=timers.target

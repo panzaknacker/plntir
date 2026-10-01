@@ -1,0 +1,6 @@
+Command: python3 tests/readiness-disabled-checks.py
+ShellCheck 0.11.0; Go 1.26.8; prepared dependencies, downloads disabled
+
+PASS: 12 readiness guard cases; no services were queried or changed.
+
+Exit: 0

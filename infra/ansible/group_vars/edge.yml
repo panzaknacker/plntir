@@ -1,0 +1,9 @@
+---
+plntir_node_role: edge
+plntir_journal_max_use: 32M
+plntir_journal_keep_free: 48M
+plntir_input_tcp_rules:
+  - name: relay-recovery-ssh
+    port: 22
+    ipv4_sources: "{{ plntir_relay_ipv4 }}"
+    ipv6_sources: "{{ plntir_relay_ipv6 }}"

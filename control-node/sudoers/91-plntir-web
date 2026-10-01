@@ -1,0 +1,11 @@
+Cmnd_Alias PLNTIR_WEB_STATUS_NFT = /usr/sbin/nft list chain inet host_filter input
+Cmnd_Alias PLNTIR_WEB_STATUS_EVENTS = /usr/bin/journalctl -t plntir-endpoint-health -n 12 --no-pager -o json
+Cmnd_Alias PLNTIR_WEB_ACTIONS = /opt/plntir/bin/plntir-web-action list-b64 *, \
+    /opt/plntir/bin/plntir-web-action preview-b64 *, \
+    /opt/plntir/bin/plntir-web-action probe-b64 *, \
+    /opt/plntir/bin/plntir-web-action export-b64 *, \
+    /opt/plntir/bin/plntir-web-action safari-history *, \
+    /opt/plntir/bin/plntir-web-action refresh
+
+plntirweb ALL=(root) NOPASSWD: PLNTIR_WEB_STATUS_NFT, PLNTIR_WEB_STATUS_EVENTS
+plntirweb ALL=(admin) NOPASSWD: PLNTIR_WEB_ACTIONS

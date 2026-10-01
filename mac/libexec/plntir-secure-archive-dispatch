@@ -1,0 +1,25 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+readonly command=${SSH_ORIGINAL_COMMAND-}
+
+exec </dev/null
+case "${command}" in
+all-users-plan-v1)
+    /usr/bin/logger -t plntir-secure-archive -- 'action=all-users-plan'
+    exec /usr/bin/nice -n 10 \
+        /usr/bin/sudo -n /usr/local/libexec/plntir-secure-archive plan-v1
+    ;;
+all-users-stream-v1)
+    /usr/bin/logger -t plntir-secure-archive -- 'action=all-users-stream'
+    exec /usr/bin/nice -n 10 \
+        /usr/bin/sudo -n /usr/local/libexec/plntir-secure-archive stream-v1
+    ;;
+*)
+    printf 'Mac all-user export command denied\n' >&2
+    exit 126
+    ;;
+esac

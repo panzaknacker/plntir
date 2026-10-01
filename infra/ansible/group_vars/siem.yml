@@ -1,0 +1,51 @@
+---
+plntir_node_role: siem
+plntir_journal_max_use: 512M
+plntir_output_policy: drop
+plntir_input_tcp_rules:
+  - name: relay-recovery-ssh
+    port: 22
+    ipv4_sources: "{{ plntir_relay_ipv4 }}"
+    ipv6_sources: "{{ plntir_relay_ipv6 }}"
+  - name: wazuh-dashboard-via-relay
+    port: 443
+    ipv4_sources: "{{ plntir_relay_ipv4 }}"
+    ipv6_sources: "{{ plntir_relay_ipv6 }}"
+  - name: wazuh-agent-events
+    port: 1514
+    ipv4_sources: "{{ plntir_managed_agent_ipv4 }}"
+    ipv6_sources: "{{ plntir_managed_agent_ipv6 }}"
+plntir_output_tcp_rules:
+  - name: relay-egress-proxy
+    port: 3128
+    ipv4_destinations: "{{ plntir_relay_ipv4 }}"
+    ipv6_destinations: "{{ plntir_relay_ipv6 }}"
+  - name: relay-smtp-alerts
+    port: 2525
+    ipv4_destinations: "{{ plntir_relay_ipv4 }}"
+    ipv6_destinations: "{{ plntir_relay_ipv6 }}"
+plntir_output_udp_rules:
+  - name: relay-time-sync
+    port: 123
+    ipv4_destinations: "{{ plntir_relay_ipv4 }}"
+    ipv6_destinations: "{{ plntir_relay_ipv6 }}"
+
+# a second gate inside the SIEM-only role. the checked-in state can neither
+# validate remote artifacts nor install wazuh.
+plntir_wazuh_enabled: false
+plntir_wazuh_check_mode_authorized: false
+plntir_wazuh_install_authorized: false
+plntir_wazuh_immediate_approval_reference: ""
+plntir_wazuh_release_version: 4.14.7
+plntir_wazuh_artifact_root: ""
+plntir_wazuh_release_manifest_path: ""
+plntir_wazuh_release_signature_path: ""
+plntir_wazuh_release_public_key_path: ""
+plntir_wazuh_release_attestation_sha256: ""
+plntir_wazuh_offline_bundle_sha256: ""
+plntir_wazuh_prerequisites_qualification_sha256: ""
+plntir_wazuh_integrity_runtime_sha256: ""
+plntir_wazuh_ingest_qualification_sha256: ""
+plntir_wazuh_alert_routes_qualified: false
+plntir_wazuh_rolesanywhere_qualified: false
+plntir_wazuh_enrollment_window_authorized: false

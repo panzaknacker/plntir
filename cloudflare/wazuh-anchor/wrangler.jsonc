@@ -1,0 +1,26 @@
+{
+  "$schema": "../scanner/node_modules/wrangler/config-schema.json",
+  "name": "plntir-wazuh-anchor",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-04",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "vars": {
+    "EXPECTED_HOSTNAME": "SET_AT_PRODUCTION_SEAL",
+    "WAZUH_ANCHOR_VERIFY_KEY": "SET_AT_PRODUCTION_SEAL",
+    "WAZUH_MTLS_CERT_SHA256": "SET_AT_PRODUCTION_SEAL"
+  },
+  "r2_buckets": [
+    {
+      "binding": "WAZUH_ANCHORS",
+      "bucket_name": "plntir-wazuh-hash-anchors"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -u
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+umask 027
+readonly CONFIG_LOADER=/opt/plntir/lib/managed-endpoint-config.sh
+[[ -r ${CONFIG_LOADER} ]] || {
+    printf 'Missing managed Mac configuration loader.\n' >&2
+    exit 78
+}
+# shellcheck source=/dev/null
+source "${CONFIG_LOADER}"
+load_managed_mac_config || exit $?
+readonly TARGET=${MAC_TARGET}
+readonly KEY=${MAC_MONITOR_KEY}
+readonly HOST_KEYS=${MAC_HOST_KEYS}
+readonly ROOT=/var/lib/plntir/monitor/security
+readonly SUMMARY=/var/lib/plntir/monitor/security-latest.json
+DAY=$(/bin/date -u +%Y-%m-%d)
+readonly DAY
+STAMP=$(/bin/date -u +%Y%m%dT%H%M%SZ)
+readonly STAMP
+readonly OUTDIR=${ROOT}/${DAY}
+
+mkdir -p "${OUTDIR}"
+exec 9>"${ROOT}/.collector.lock"
+/usr/bin/flock -n 9 || exit 0
+tmpdir=$(/usr/bin/mktemp -d "${ROOT}/.capture.XXXXXX")
+trap '/bin/rm -rf "$tmpdir"' EXIT
+
+ssh_base=(
+    /usr/bin/timeout 90
+    /usr/bin/ssh
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=yes
+    -o UserKnownHostsFile="${HOST_KEYS}"
+    -i "${KEY}"
+    "${TARGET}"
+)
+
+if [[ ${MAC_TRANSPORT} == dispatch ]]; then
+    posture_command=posture-v1
+    telemetry_command=telemetry-v1
+else
+    posture_command='sudo -n /usr/local/libexec/plntir-security-collector posture'
+    telemetry_command='sudo -n /usr/local/libexec/plntir-security-collector telemetry'
+fi
+
+posture_rc=0
+telemetry_rc=0
+"${ssh_base[@]}" "${posture_command}" >"${tmpdir}/posture.txt" 2>&1 || posture_rc=$?
+"${ssh_base[@]}" "${telemetry_command}" >"${tmpdir}/telemetry.txt" 2>&1 || telemetry_rc=$?
+
+if [[ ${posture_rc} -eq 0 ]]; then
+    /bin/gzip -9 -c "${tmpdir}/posture.txt" >"${OUTDIR}/.${STAMP}-posture.txt.gz"
+    /bin/mv "${OUTDIR}/.${STAMP}-posture.txt.gz" "${OUTDIR}/${STAMP}-posture.txt.gz"
+fi
+if [[ ${telemetry_rc} -eq 0 ]]; then
+    /bin/gzip -9 -c "${tmpdir}/telemetry.txt" >"${OUTDIR}/.${STAMP}-telemetry.txt.gz"
+    /bin/mv "${OUTDIR}/.${STAMP}-telemetry.txt.gz" "${OUTDIR}/${STAMP}-telemetry.txt.gz"
+fi
+
+/usr/bin/jq -cn \
+    --arg timestamp "${STAMP}" \
+    --argjson posture_rc "${posture_rc}" \
+    --argjson telemetry_rc "${telemetry_rc}" \
+    '{timestamp:$timestamp,posture_rc:$posture_rc,telemetry_rc:$telemetry_rc}' \
+    >"${tmpdir}/summary.json"
+/bin/chmod 0640 "${tmpdir}/summary.json"
+/bin/mv -f "${tmpdir}/summary.json" "${SUMMARY}"
+
+/usr/bin/find "${ROOT}" -mindepth 2 -type f -mtime +30 -delete
+/usr/bin/find "${ROOT}" -mindepth 1 -type d -empty -delete

@@ -1,0 +1,8 @@
+[Unit]
+Description=Optional Plntir Secure Archive readiness schedule (on-demand policy keeps this stopped)
+
+[Timer]
+OnUnitActiveSec=6h
+RandomizedDelaySec=10m
+Persistent=true
+Unit=plntir-secure-archive-readiness.service

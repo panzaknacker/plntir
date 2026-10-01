@@ -1,0 +1,42 @@
+#!/bin/sh
+set -u
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH LC_ALL=C
+
+printf 'time='
+date -u +%Y-%m-%dT%H:%M:%SZ
+printf 'uptime='
+uptime
+printf 'console='
+stat -f %Su /dev/console
+printf 'users='
+who | cut -d' ' -f1 | sort -u | tr '\n' ','
+printf '\n'
+printf 'disk='
+df -k / | tail -1
+printf 'mesh='
+ifconfig 2>/dev/null | grep 'inet 100[.]96[.]' | tr -s ' ' || true
+printf 'gatekeeper='
+spctl --status 2>&1
+integrity_status='/Library/Application Support/Plntir/Integrity/status.env'
+if [ -f "${integrity_status}" ] && [ ! -L "${integrity_status}" ]; then
+    for key in \
+        integrity_state \
+        integrity_mode \
+        integrity_checked_at \
+        integrity_release \
+        integrity_checked_files \
+        integrity_drift_count; do
+        value=$(sed -n "s/^${key}=//p" "${integrity_status}" | head -n 1)
+        printf '%s=%s\n' "${key}" "${value}"
+    done
+else
+    printf 'integrity_state=not_installed\n'
+    printf 'integrity_mode=alert-only\n'
+    printf 'integrity_checked_at=\n'
+    printf 'integrity_release=\n'
+    printf 'integrity_checked_files=0\n'
+    printf 'integrity_drift_count=0\n'
+fi
+printf 'remote_login=reachable\n'

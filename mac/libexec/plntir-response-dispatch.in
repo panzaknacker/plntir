@@ -1,0 +1,76 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+readonly command=${SSH_ORIGINAL_COMMAND-}
+readonly managed_user=@MANAGED_USER@
+
+case "${command}" in
+response-status-v1)
+    exec </dev/null
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=status'
+    exec /usr/bin/sudo -n /usr/local/libexec/plntir-response-status
+    ;;
+export-list-v1\ *)
+    token=${command#export-list-v1 }
+    [[ ${token} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || exit 64
+    exec </dev/null
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=export-list'
+    exec /usr/bin/nice -n 10 /usr/bin/sudo -n -u "${managed_user}" \
+        /usr/local/libexec/plntir-retrieval-export list-b64 "${token}"
+    ;;
+export-preview-v1\ *)
+    token=${command#export-preview-v1 }
+    [[ ${token} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || exit 64
+    exec </dev/null
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=export-preview'
+    exec /usr/bin/nice -n 10 /usr/bin/sudo -n -u "${managed_user}" \
+        /usr/local/libexec/plntir-retrieval-export preview-b64 "${token}"
+    ;;
+export-probe-v1\ *)
+    token=${command#export-probe-v1 }
+    [[ ${token} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || exit 64
+    exec </dev/null
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=export-probe'
+    exec /usr/bin/nice -n 10 /usr/bin/sudo -n -u "${managed_user}" \
+        /usr/local/libexec/plntir-retrieval-export probe-b64 "${token}"
+    ;;
+export-v1\ *)
+    token=${command#export-v1 }
+    [[ ${token} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || exit 64
+    exec </dev/null
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=export'
+    exec /usr/bin/nice -n 10 /usr/bin/sudo -n -u "${managed_user}" \
+        /usr/local/libexec/plntir-retrieval-export export-b64 "${token}"
+    ;;
+safari-history-v1\ *)
+    if [[ ! ${command} =~ ^safari-history-v1[[:space:]]+([0-9]{1,4})[[:space:]]+([0-9]{1,4})$ ]]; then
+        exit 64
+    fi
+    hours=$((10#${BASH_REMATCH[1]}))
+    limit=$((10#${BASH_REMATCH[2]}))
+    ((hours >= 1 && hours <= 8760 && limit >= 1 && limit <= 5000)) || exit 64
+    exec </dev/null
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=safari-history'
+    exec /usr/bin/nice -n 10 /usr/bin/sudo -n -u "${managed_user}" \
+        /usr/local/libexec/plntir-retrieval-export safari-history "${hours}" "${limit}"
+    ;;
+export-delete-v1\ *)
+    archive=${command#export-delete-v1 }
+    [[ ${archive} =~ ^/Users/Shared/[.]plntir/archive/retrievals/[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || exit 64
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=export-delete'
+    exec /bin/rm -f -- "${archive}"
+    ;;
+scp\ -f\ *)
+    [[ ${command} =~ ^scp[[:space:]]+-f[[:space:]]+(/Users/Shared/[.]plntir/archive/retrievals/[A-Za-z0-9._-]+[.]tar[.]gz)$ ]] || exit 64
+    archive=${BASH_REMATCH[1]}
+    /usr/bin/logger -t plntir-endpoint-response -- 'action=export-transfer'
+    exec /usr/bin/nice -n 10 /usr/bin/scp -f -- "${archive}"
+    ;;
+*)
+    printf 'Plntir Endpoint Agent response command denied\n' >&2
+    exit 126
+    ;;
+esac

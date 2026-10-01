@@ -1,0 +1,12 @@
+{
+  "name": "@plntir/wazuh-anchor",
+  "version": "0.1.0-shadow",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.js && node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

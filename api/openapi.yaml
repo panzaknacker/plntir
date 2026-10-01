@@ -1,0 +1,1031 @@
+openapi: 3.1.0
+info:
+  title: Plntir v1 API
+  version: 1.0.0-shadow
+  description: >-
+    Public contract for the Fileshare and typed administration API. Cloudflare
+    Access and registered WARP-device posture are enforced before this API;
+    application sessions, CSRF, idempotency and resource versions are enforced
+    again by the Core. Internal Fleet, scanner, relay, agent and Wazuh envelopes
+    are intentionally not part of this public contract.
+servers:
+  - url: https://plntir.example/api/v1
+    description: Registered Fileshare devices
+  - url: https://admin.plntir.example/api/v1
+    description: Registered administrator devices
+security:
+  - sessionCookie: []
+tags:
+  - name: Authentication
+  - name: Devices
+  - name: Contacts
+  - name: Files
+  - name: Shares
+  - name: Administration
+paths:
+  /auth/invites/redeem:
+    post:
+      tags: [Authentication]
+      operationId: redeemEnrollmentInvite
+      security: []
+      x-plntir-edge-requirement: one-time WARP service token
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/CreateOnlyVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteRedemption'
+      responses:
+        '200':
+          description: Invite accepted; service-token revocation is queued transactionally.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentContext'
+        default:
+          $ref: '#/components/responses/Error'
+  /auth/passkeys/registration/options:
+    post:
+      tags: [Authentication]
+      operationId: beginPasskeyRegistration
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/CreateOnlyVersion'
+      requestBody:
+        $ref: '#/components/requestBodies/EnrollmentContext'
+      responses:
+        '200':
+          description: WebAuthn creation options bound to the one-time enrollment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/passkeys/registration/verify:
+    post:
+      tags: [Authentication]
+      operationId: finishPasskeyRegistration
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/CreateOnlyVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebAuthnCredential' }
+      responses:
+        '201':
+          description: Device-bound 30-day session created and enrollment token consumed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/login/options:
+    post:
+      tags: [Authentication]
+      operationId: beginLogin
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/CreateOnlyVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { $ref: '#/components/schemas/Username' }
+      responses:
+        '200':
+          description: WebAuthn request options without account enumeration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/login/verify:
+    post:
+      tags: [Authentication]
+      operationId: finishLogin
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/CreateOnlyVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebAuthnCredential' }
+      responses:
+        '200':
+          description: Device-bound session created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /session:
+    get:
+      tags: [Authentication]
+      operationId: getSession
+      responses:
+        '200':
+          description: Current session and step-up status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Authentication]
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '204': { description: Session revoked. }
+        default: { $ref: '#/components/responses/Error' }
+  /session/step-up/options:
+    post:
+      tags: [Authentication]
+      operationId: beginStepUp
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '200':
+          description: Fresh local WebAuthn challenge.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
+        default: { $ref: '#/components/responses/Error' }
+  /session/step-up/verify:
+    post:
+      tags: [Authentication]
+      operationId: finishStepUp
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebAuthnCredential' }
+      responses:
+        '200':
+          description: Ten-minute sensitive-action window created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '423':
+          description: Invalid cryptographic assertion triggered the 24-hour identity/device/IP lock.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        default: { $ref: '#/components/responses/Error' }
+  /devices/registrations:
+    post:
+      tags: [Devices]
+      operationId: registerDevice
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegistration' }
+      responses:
+        '201':
+          description: Pending device registration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        default: { $ref: '#/components/responses/Error' }
+  /devices/recoveries:
+    post:
+      tags: [Devices]
+      operationId: recoverDevice
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRecovery' }
+      responses:
+        '202': { description: Recovery verification started. }
+        default: { $ref: '#/components/responses/Error' }
+  /account/username:
+    patch:
+      tags: [Authentication]
+      operationId: renameAccount
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { $ref: '#/components/schemas/Username' }
+      responses:
+        '200':
+          description: Account renamed; every historical canonical name remains reserved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        default: { $ref: '#/components/responses/Error' }
+  /account/deletion-request:
+    post:
+      tags: [Authentication]
+      operationId: requestAccountDeletion
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '202': { description: Account deletion requested; no data is deleted by this user action. }
+        default: { $ref: '#/components/responses/Error' }
+  /contacts/invites:
+    post:
+      tags: [Contacts]
+      operationId: createContactInvite
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '201':
+          description: Non-guessable one-time contact code suitable for QR encoding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OneTimeCode' }
+        default: { $ref: '#/components/responses/Error' }
+  /contacts/invites/{code}/accept:
+    post:
+      tags: [Contacts]
+      operationId: acceptContactInvite
+      parameters:
+        - $ref: '#/components/parameters/ContactCode'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '201':
+          description: Pending two-sided contact.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+        default: { $ref: '#/components/responses/Error' }
+  /contacts/{contactId}/confirm:
+    post:
+      tags: [Contacts]
+      operationId: confirmContact
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/ContactID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '200':
+          description: Contact after one side confirms; active only after both confirmations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+        default: { $ref: '#/components/responses/Error' }
+  /contacts/{contactId}:
+    delete:
+      tags: [Contacts]
+      operationId: removeContact
+      parameters:
+        - $ref: '#/components/parameters/ContactID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '204': { description: Contact and all future share access revoked immediately. }
+        default: { $ref: '#/components/responses/Error' }
+  /files:
+    get:
+      tags: [Files]
+      operationId: listFiles
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Owned and received files; no global directory data.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/File' }
+                  next_cursor: { type: [string, 'null'] }
+        default: { $ref: '#/components/responses/Error' }
+  /uploads:
+    post:
+      tags: [Files]
+      operationId: startUpload
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadStart' }
+      responses:
+        '201':
+          description: Full logical size reserved and immutable R2 object identifier allocated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Upload' }
+        default: { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}:
+    get:
+      tags: [Files]
+      operationId: resumeUpload
+      parameters:
+        - $ref: '#/components/parameters/UploadID'
+      responses:
+        '200':
+          description: Persisted upload and confirmed-parts state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Upload' }
+        default: { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}/parts/{partNumber}/ticket:
+    post:
+      tags: [Files]
+      operationId: createUploadPartTicket
+      parameters:
+        - $ref: '#/components/parameters/UploadID'
+        - $ref: '#/components/parameters/PartNumber'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ciphertext_sha256, size_bytes]
+              properties:
+                ciphertext_sha256: { $ref: '#/components/schemas/SHA256' }
+                size_bytes: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Five-minute bearer capability bound to method, object, part and checksum.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferTicket' }
+        default: { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}/parts/{partNumber}:
+    put:
+      tags: [Files]
+      operationId: confirmUploadPart
+      parameters:
+        - $ref: '#/components/parameters/UploadID'
+        - $ref: '#/components/parameters/PartNumber'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [etag, ciphertext_sha256, size_bytes]
+              properties:
+                etag: { type: string, minLength: 1, maxLength: 256 }
+                ciphertext_sha256: { $ref: '#/components/schemas/SHA256' }
+                size_bytes: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Part persisted after R2 verification. }
+        default: { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}/complete:
+    post:
+      tags: [Files]
+      operationId: completeUpload
+      parameters:
+        - $ref: '#/components/parameters/UploadID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '202': { description: Ciphertext finalized and an idempotent scan job queued. }
+        default: { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}/abort:
+    post:
+      tags: [Files]
+      operationId: abortUpload
+      parameters:
+        - $ref: '#/components/parameters/UploadID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '204': { description: Multipart upload aborted and reservation released. }
+        default: { $ref: '#/components/responses/Error' }
+  /files/{fileId}/download-ticket:
+    post:
+      tags: [Files]
+      operationId: createDownloadTicket
+      parameters:
+        - $ref: '#/components/parameters/FileID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '200':
+          description: Five-minute ciphertext download capability; requires a clean scan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferTicket' }
+        '423': { description: Preview and download remain locked until a clean scan. }
+        default: { $ref: '#/components/responses/Error' }
+  /files/{fileId}:
+    delete:
+      tags: [Files]
+      operationId: trashFile
+      parameters:
+        - $ref: '#/components/parameters/FileID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '204': { description: File trashed for 30 days and all shares ended immediately. }
+        default: { $ref: '#/components/responses/Error' }
+  /files/{fileId}/restore:
+    post:
+      tags: [Files]
+      operationId: restoreFile
+      parameters:
+        - $ref: '#/components/parameters/FileID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '200':
+          description: Owned file restored without restoring revoked shares.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/File' }
+        default: { $ref: '#/components/responses/Error' }
+  /shares:
+    post:
+      tags: [Shares]
+      operationId: createShare
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file_id, contact_id]
+              properties:
+                file_id: { $ref: '#/components/schemas/StableID' }
+                contact_id: { $ref: '#/components/schemas/StableID' }
+      responses:
+        '201':
+          description: Owner-only share; recipients can never reshare.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Share' }
+        default: { $ref: '#/components/responses/Error' }
+  /shares/{shareId}:
+    delete:
+      tags: [Shares]
+      operationId: revokeShare
+      parameters:
+        - $ref: '#/components/parameters/ShareID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '204': { description: Future access revoked immediately. }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/health:
+    get:
+      tags: [Administration]
+      operationId: getAdminHealth
+      responses:
+        '200':
+          description: Native v3 or explicitly marked legacy read-only projection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformStatusV3' }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/devices:
+    get:
+      tags: [Administration]
+      operationId: listAdminDevices
+      responses:
+        '200':
+          description: At most 25 managed-device projections.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 25
+                items: { $ref: '#/components/schemas/Device' }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/incidents:
+    get:
+      tags: [Administration]
+      operationId: listIncidents
+      responses:
+        '200':
+          description: Sanitized incident projection.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Incident' }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/audit:
+    get:
+      tags: [Administration]
+      operationId: listAudit
+      responses:
+        '200':
+          description: Hash-chained audit entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditEntry' }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/actions/{action}:
+    post:
+      tags: [Administration]
+      operationId: runTypedAction
+      x-plntir-step-up: required-for-sensitive-actions
+      description: >-
+        Runs one allowlisted typed action. Arbitrary commands, shell text and a
+        web terminal are not accepted by this API.
+      parameters:
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [refresh-device, isolate-device-network, release-device-network, retry-backup, acknowledge-incident, resolve-incident]
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TypedAction' }
+      responses:
+        '202': { description: Typed durable job created. }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/devices/{deviceId}/wipe:
+    post:
+      tags: [Administration]
+      operationId: wipeOneDevice
+      x-plntir-step-up: action-password-and-one-of-two-fido-keys
+      description: There is deliberately no collection or bulk-wipe operation.
+      parameters:
+        - $ref: '#/components/parameters/DeviceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WipeRequest' }
+      responses:
+        '202': { description: Single-device wipe queued locally or handed to MDM. }
+        '409': { description: Device identity, serial or verified wipe capability did not match. }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/accounts/{accountId}/deletion:
+    post:
+      tags: [Administration]
+      operationId: executeAccountDeletion
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/AccountID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      responses:
+        '202': { description: Account and shares locked; 30-day transfer window started. }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/accounts/{accountId}/transfer:
+    post:
+      tags: [Administration]
+      operationId: transferDeletedAccountFiles
+      x-plntir-step-up: required
+      parameters:
+        - $ref: '#/components/parameters/AccountID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [recipient_account_id, reason]
+              properties:
+                recipient_account_id: { $ref: '#/components/schemas/StableID' }
+                reason: { type: string, minLength: 8, maxLength: 500 }
+      responses:
+        '202': { description: Files transfer without shares. }
+        default: { $ref: '#/components/responses/Error' }
+  /admin/files/{fileId}/quarantine-export-ticket:
+    post:
+      tags: [Administration]
+      operationId: createQuarantineExportTicket
+      x-plntir-step-up: required
+      description: Export target must be a managed Mac quarantine directory.
+      parameters:
+        - $ref: '#/components/parameters/FileID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/ResourceVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, reason]
+              properties:
+                device_id: { $ref: '#/components/schemas/StableID' }
+                reason: { type: string, minLength: 8, maxLength: 500 }
+      responses:
+        '200':
+          description: Audited owner/admin quarantine export capability.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferTicket' }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-plntir_session
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~-]+$'
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string, minLength: 32, maxLength: 256 }
+    ResourceVersion:
+      name: If-Match
+      in: header
+      required: true
+      description: Strong entity tag containing the last observed integer resource version.
+      schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+    CreateOnlyVersion:
+      name: If-None-Match
+      in: header
+      required: true
+      description: Creation precondition; the request fails if its idempotency identity already exists.
+      schema: { type: string, const: '*' }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string, maxLength: 512 }
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    DeviceID:
+      name: deviceId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StableID' }
+    AccountID:
+      name: accountId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StableID' }
+    ContactID:
+      name: contactId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StableID' }
+    ContactCode:
+      name: code
+      in: path
+      required: true
+      schema: { type: string, minLength: 32, maxLength: 256 }
+    FileID:
+      name: fileId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StableID' }
+    ShareID:
+      name: shareId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StableID' }
+    UploadID:
+      name: uploadId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StableID' }
+    PartNumber:
+      name: partNumber
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1, maximum: 10000 }
+  requestBodies:
+    EnrollmentContext:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [enrollment_id, continuation_token]
+            properties:
+              enrollment_id: { $ref: '#/components/schemas/StableID' }
+              continuation_token: { type: string, minLength: 32, maxLength: 512 }
+  responses:
+    Error:
+      description: Request failed without leaking credentials, existence or sensitive content.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    StableID:
+      type: string
+      minLength: 3
+      maxLength: 128
+      pattern: '^[a-z0-9][a-z0-9._-]+[a-z0-9]$'
+    Username:
+      type: string
+      minLength: 1
+      maxLength: 128
+      description: 1–32 visible Unicode code points after NFC normalization.
+    SHA256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    InviteRedemption:
+      type: object
+      additionalProperties: false
+      required: [invite_code, device]
+      properties:
+        invite_code: { type: string, minLength: 32, maxLength: 256 }
+        device: { $ref: '#/components/schemas/DeviceRegistration' }
+    EnrollmentContext:
+      type: object
+      required: [enrollment_id, continuation_token, expires_at]
+      properties:
+        enrollment_id: { $ref: '#/components/schemas/StableID' }
+        continuation_token: { type: string }
+        expires_at: { type: string, format: date-time }
+    WebAuthnOptions:
+      type: object
+      description: Standards-compliant PublicKeyCredential creation or request options.
+      additionalProperties: true
+    WebAuthnCredential:
+      type: object
+      description: Browser PublicKeyCredential response; origin, RP ID, challenge and counter are verified server-side.
+      additionalProperties: true
+    Session:
+      type: object
+      required: [account_id, device_id, expires_at, idle_expires_at, step_up_active]
+      properties:
+        account_id: { $ref: '#/components/schemas/StableID' }
+        device_id: { $ref: '#/components/schemas/StableID' }
+        expires_at: { type: string, format: date-time }
+        idle_expires_at: { type: string, format: date-time }
+        step_up_active: { type: boolean }
+        step_up_expires_at: { type: [string, 'null'], format: date-time }
+    Account:
+      type: object
+      required: [id, username, state, version]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        username: { $ref: '#/components/schemas/Username' }
+        state: { type: string, enum: [active, deletion_pending, tombstoned] }
+        version: { type: integer, minimum: 1 }
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [display_name, platform, serial_number, warp_device_id]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 128 }
+        platform: { type: string, enum: [macos, ios] }
+        serial_number: { type: string, minLength: 4, maxLength: 128 }
+        warp_device_id: { type: string, minLength: 1, maxLength: 256 }
+    DeviceRecovery:
+      type: object
+      additionalProperties: false
+      required: [device_id, recovery_code]
+      properties:
+        device_id: { $ref: '#/components/schemas/StableID' }
+        recovery_code: { type: string, minLength: 32, maxLength: 512 }
+    Device:
+      type: object
+      required: [id, display_name, platform, management_state, posture_state, wipe_state, version]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        display_name: { type: string }
+        platform: { type: string, enum: [macos, ios, linux] }
+        management_state: { type: string, enum: [verified, partial, unavailable] }
+        posture_state: { type: string, enum: [passing, degraded, failing, unknown] }
+        wipe_state: { type: string, enum: [verified, unverified, unavailable] }
+        version: { type: integer, minimum: 1 }
+    OneTimeCode:
+      type: object
+      required: [code, expires_at]
+      properties:
+        code: { type: string }
+        expires_at: { type: string, format: date-time }
+    Contact:
+      type: object
+      required: [id, username, state, version]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        username: { $ref: '#/components/schemas/Username' }
+        state: { type: string, enum: [pending, active, removed] }
+        version: { type: integer, minimum: 1 }
+    UploadStart:
+      type: object
+      additionalProperties: false
+      required: [filename, media_kind, plaintext_size_bytes, manifest_sha256, nonce_prefix, kms_envelope, offline_envelope]
+      properties:
+        filename: { type: string, minLength: 1, maxLength: 1024 }
+        media_kind: { type: string, enum: [standard, image, video] }
+        plaintext_size_bytes: { type: integer, minimum: 1, maximum: 500000000000 }
+        manifest_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        nonce_prefix: { type: string, pattern: '^[A-Za-z0-9_-]{6}$' }
+        kms_envelope: { type: string, contentEncoding: base64 }
+        offline_envelope: { type: string, contentEncoding: base64 }
+    Upload:
+      type: object
+      required: [id, file_id, state, part_size_bytes, expected_parts, expected_ciphertext_size_bytes, confirmed_parts, expires_at, version]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        file_id: { $ref: '#/components/schemas/StableID' }
+        state: { type: string, enum: [starting, uploading, completing, complete, aborted, expired] }
+        part_size_bytes: { type: integer, minimum: 1 }
+        expected_parts: { type: integer, minimum: 1, maximum: 10000 }
+        expected_ciphertext_size_bytes: { type: integer, minimum: 17, maximum: 500000160000 }
+        confirmed_parts:
+          type: array
+          items: { type: integer, minimum: 1, maximum: 10000 }
+        expires_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    TransferTicket:
+      type: object
+      required: [url, method, expires_at, required_headers]
+      properties:
+        url: { type: string, format: uri }
+        method: { type: string, enum: [GET, PUT] }
+        expires_at: { type: string, format: date-time }
+        required_headers:
+          type: object
+          additionalProperties: { type: string }
+    File:
+      type: object
+      required: [id, filename, owner_account_id, logical_size_bytes, scan_state, state, version]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        filename: { type: string }
+        owner_account_id: { $ref: '#/components/schemas/StableID' }
+        logical_size_bytes: { type: integer, minimum: 0 }
+        scan_state: { type: string, enum: [pending_upload, queued, scanning, clean, malware, unscannable, failed] }
+        state: { type: string, enum: [uploading, active, trashed, deletion_pending, purged] }
+        version: { type: integer, minimum: 1 }
+    Share:
+      type: object
+      required: [id, file_id, recipient_account_id, state, version]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        file_id: { $ref: '#/components/schemas/StableID' }
+        recipient_account_id: { $ref: '#/components/schemas/StableID' }
+        state: { type: string, enum: [active, revoked] }
+        version: { type: integer, minimum: 1 }
+    TypedAction:
+      type: object
+      additionalProperties: false
+      required: [target_id, reason]
+      properties:
+        target_id: { $ref: '#/components/schemas/StableID' }
+        reason: { type: string, minLength: 8, maxLength: 500 }
+    WipeRequest:
+      type: object
+      additionalProperties: false
+      required: [typed_device_id, typed_serial_number, action_password_proof, webauthn_assertion]
+      properties:
+        typed_device_id: { $ref: '#/components/schemas/StableID' }
+        typed_serial_number: { type: string, minLength: 4, maxLength: 128 }
+        action_password_proof: { type: string, minLength: 32, maxLength: 1024 }
+        webauthn_assertion: { $ref: '#/components/schemas/WebAuthnCredential' }
+    Incident:
+      type: object
+      required: [id, kind, severity, state, occurred_at, summary]
+      properties:
+        id: { $ref: '#/components/schemas/StableID' }
+        device_id: { oneOf: [{ $ref: '#/components/schemas/StableID' }, { type: 'null' }] }
+        kind: { type: string }
+        severity: { type: string, enum: [info, low, medium, high, critical] }
+        state: { type: string, enum: [open, acknowledged, resolved] }
+        occurred_at: { type: string, format: date-time }
+        summary: { type: string }
+    AuditEntry:
+      type: object
+      required: [sequence, id, occurred_at, actor_id, action, target_id, success, previous_hash, entry_hash]
+      properties:
+        sequence: { type: integer, minimum: 1 }
+        id: { $ref: '#/components/schemas/StableID' }
+        occurred_at: { type: string, format: date-time }
+        actor_id: { type: string }
+        action: { type: string }
+        target_id: { type: string }
+        success: { type: boolean }
+        previous_hash: { $ref: '#/components/schemas/SHA256' }
+        entry_hash: { $ref: '#/components/schemas/SHA256' }
+    PlatformStatusV3:
+      type: object
+      required: [schema_version, collected_at, source, services, devices, incidents, budgets]
+      properties:
+        schema_version: { type: integer, const: 3 }
+        collected_at: { type: string, format: date-time }
+        source:
+          type: object
+          required: [mode, schema_version]
+          properties:
+            mode: { type: string, enum: [native, legacy-read-only] }
+            schema_version: { type: integer, minimum: 1, maximum: 3 }
+        services: { type: array, items: { type: object, additionalProperties: true } }
+        devices: { type: array, maxItems: 25, items: { type: object, additionalProperties: true } }
+        incidents: { type: array, items: { $ref: '#/components/schemas/Incident' } }
+        budgets: { type: object, additionalProperties: true }
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, request_id]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        request_id: { $ref: '#/components/schemas/StableID' }

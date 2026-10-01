@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Plntir Endpoint Security telemetry every five minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5m
+AccuracySec=15s
+Persistent=true
+Unit=plntir-endpoint-security.service
+
+[Install]
+WantedBy=timers.target

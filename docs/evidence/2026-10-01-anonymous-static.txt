@@ -1,0 +1,3 @@
+SKIP docker compose validation (not installed)
+SKIP shellcheck (not installed locally)
+Static checks passed.

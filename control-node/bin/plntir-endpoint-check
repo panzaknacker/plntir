@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -u
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+umask 027
+readonly CONFIG_LOADER=/opt/plntir/lib/managed-endpoint-config.sh
+[[ -r ${CONFIG_LOADER} ]] || {
+    printf 'Missing managed Mac configuration loader.\n' >&2
+    exit 78
+}
+# shellcheck source=/dev/null
+source "${CONFIG_LOADER}"
+load_managed_mac_config || exit $?
+readonly TARGET=${MAC_TARGET}
+readonly KEY=${MAC_MONITOR_KEY}
+readonly HOST_KEYS=${MAC_HOST_KEYS}
+readonly STATE_DIR=/var/lib/plntir/monitor
+readonly LATEST=${STATE_DIR}/mac-latest.json
+readonly HISTORY=${STATE_DIR}/mac-health.jsonl
+readonly LAST_STATE=${STATE_DIR}/mac-last-state
+if [[ ${MAC_TRANSPORT} == dispatch ]]; then
+    readonly REMOTE_COMMAND=health-v1
+else
+    readonly REMOTE_COMMAND='LC_ALL=C; printf "time="; date -u +%Y-%m-%dT%H:%M:%SZ; printf "uptime="; uptime; printf "console="; stat -f %Su /dev/console; printf "users="; who | cut -d" " -f1 | sort -u | tr "\n" ","; echo; printf "disk="; df -k / | tail -1; printf "mesh="; ifconfig 2>/dev/null | grep "inet 100[.]96[.]" | tr -s " "; printf "gatekeeper="; spctl --status 2>&1; echo "remote_login=reachable"'
+fi
+
+timestamp=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+tmp=$(/usr/bin/mktemp "${STATE_DIR}/.mac-latest.XXXXXX")
+trap '/bin/rm -f "$tmp"' EXIT
+
+set +e
+snapshot=$(/usr/bin/timeout 35 /usr/bin/ssh \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="${HOST_KEYS}" \
+    -i "${KEY}" \
+    "${TARGET}" "${REMOTE_COMMAND}" 2>&1)
+ssh_rc=$?
+set -e
+
+if [[ ${ssh_rc} -eq 0 ]]; then
+    state=online
+else
+    state=offline
+fi
+
+/usr/bin/jq -cn \
+    --arg timestamp "${timestamp}" \
+    --arg state "${state}" \
+    --argjson ssh_rc "${ssh_rc}" \
+    --arg snapshot "${snapshot}" \
+    '{timestamp:$timestamp,state:$state,ssh_rc:$ssh_rc,snapshot:$snapshot}' >"${tmp}"
+/bin/chmod 0640 "${tmp}"
+/bin/mv -f "${tmp}" "${LATEST}"
+/bin/cat "${LATEST}" >>"${HISTORY}"
+
+previous=$(/bin/cat "${LAST_STATE}" 2>/dev/null || true)
+if [[ ${state} != "${previous}" ]]; then
+    /usr/bin/logger -t plntir-endpoint-health "managed Mac state changed: ${previous:-unknown} -> ${state}"
+fi
+printf '%s\n' "${state}" >"${LAST_STATE}"

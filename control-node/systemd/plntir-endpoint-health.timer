@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Plntir Endpoint Health every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=true
+Unit=plntir-endpoint-health.service
+
+[Install]
+WantedBy=timers.target

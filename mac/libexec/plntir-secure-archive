@@ -1,0 +1,130 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+
+if [[ ${EUID} -ne 0 ]]; then
+    printf 'plntir-secure-archive must run as root\n' >&2
+    exit 77
+fi
+if [[ $# -ne 1 ]]; then
+    printf 'usage: %s plan-v1|stream-v1\n' "$0" >&2
+    exit 64
+fi
+
+readonly SCOPE_ROOT=/Users
+readonly LOCK_DIR=/private/var/run/plntir-secure-archive.lock
+readonly ACTION=$1
+measure_dir=''
+measure_stderr=''
+source_kib=0
+source_bytes=0
+unreadable_entries=0
+local_user_count=0
+home_directory_count=0
+plan_ok=false
+plan_reason=unknown
+
+cleanup_measurement() {
+    if [[ -n ${measure_dir} ]]; then
+        case ${measure_dir} in
+        /private/var/tmp/plntir-secure-archive.*)
+            /bin/rm -rf "${measure_dir}"
+            ;;
+        *)
+            printf 'Refusing unsafe measurement cleanup path\n' >&2
+            ;;
+        esac
+    fi
+}
+
+measure_scope() {
+    local du_output du_rc
+    measure_dir=$(/usr/bin/mktemp -d /private/var/tmp/plntir-secure-archive.XXXXXX)
+    measure_stderr=${measure_dir}/du.stderr
+
+    set +e
+    du_output=$(/usr/bin/du -A -skx "${SCOPE_ROOT}" 2>"${measure_stderr}")
+    du_rc=$?
+    set -e
+
+    source_kib=$(printf '%s\n' "${du_output}" | /usr/bin/awk 'NR == 1 && $1 ~ /^[0-9]+$/ {print $1}')
+    [[ ${source_kib} =~ ^[0-9]+$ ]] || source_kib=0
+    source_bytes=$((source_kib * 1024))
+    unreadable_entries=$(/usr/bin/awk 'NF {count++} END {print count+0}' "${measure_stderr}")
+    local_user_count=$(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null |
+        /usr/bin/awk '$2 ~ /^[0-9]+$/ && $2 >= 500 {count++} END {print count+0}')
+    home_directory_count=0
+    for home in "${SCOPE_ROOT}"/*; do
+        [[ -d ${home} && ! -L ${home} && ${home} != "${SCOPE_ROOT}/Shared" ]] || continue
+        home_directory_count=$((home_directory_count + 1))
+    done
+
+    if [[ ! -d ${SCOPE_ROOT} || -L ${SCOPE_ROOT} ]]; then
+        plan_ok=false
+        plan_reason=unsafe_scope
+    elif [[ ${du_rc} -ne 0 || ${unreadable_entries} -ne 0 ]]; then
+        plan_ok=false
+        plan_reason=full_disk_access_required
+    elif [[ ${source_bytes} -le 0 ]]; then
+        plan_ok=false
+        plan_reason=measurement_failed
+    else
+        plan_ok=true
+        plan_reason=ready
+    fi
+}
+
+emit_plan() {
+    local checked_at
+    checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf '{"schema_version":1,"scope":"all-users","scope_root":"/Users","ok":%s,"reason":"%s","checked_at":"%s","local_user_count":%d,"home_directory_count":%d,"bytes":%d,"unreadable_entries":%d}\n' \
+        "${plan_ok}" \
+        "${plan_reason}" \
+        "${checked_at}" \
+        "${local_user_count}" \
+        "${home_directory_count}" \
+        "${source_bytes}" \
+        "${unreadable_entries}"
+}
+
+case ${ACTION} in
+plan-v1)
+    trap cleanup_measurement EXIT
+    measure_scope
+    emit_plan
+    ;;
+stream-v1)
+    if ! /bin/mkdir "${LOCK_DIR}" 2>/dev/null; then
+        printf 'Another all-user export is already running\n' >&2
+        exit 75
+    fi
+    release_lock() {
+        cleanup_measurement
+        /bin/rmdir "${LOCK_DIR}" 2>/dev/null || true
+    }
+    trap release_lock EXIT HUP INT TERM
+    measure_scope
+    if [[ ${plan_ok} != true ]]; then
+        printf 'All-user export refused: %s (%d unreadable entries)\n' \
+            "${plan_reason}" "${unreadable_entries}" >&2
+        exit 77
+    fi
+    cleanup_measurement
+    measure_dir=''
+    cd /
+    /usr/bin/tar \
+        --one-file-system \
+        --acls \
+        --xattrs \
+        --mac-metadata \
+        -cf - \
+        Users
+    ;;
+*)
+    printf 'Unknown all-user export action\n' >&2
+    exit 64
+    ;;
+esac

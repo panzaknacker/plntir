@@ -1,0 +1,13 @@
+{
+  "name": "@plntir/admin",
+  "version": "0.1.0-shadow",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc --noEmit && vitest run"
+  },
+  "dependencies": {
+    "preact": "10.29.8"
+  }
+}

@@ -1,0 +1,4 @@
+Cmnd_Alias PLNTIR_STATUS_NFT = /usr/sbin/nft list chain inet host_filter input
+Cmnd_Alias PLNTIR_STATUS_EVENTS = /usr/bin/journalctl -t plntir-endpoint-health -n 12 --no-pager -o json
+
+macobserver ALL=(root) NOPASSWD: PLNTIR_STATUS_NFT, PLNTIR_STATUS_EVENTS

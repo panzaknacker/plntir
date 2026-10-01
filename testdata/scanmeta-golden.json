@@ -1,0 +1,20 @@
+{
+  "accountID": "0123456789abcdef0123456789abcdef",
+  "bucket": "plntir-files",
+  "objectKey": "objects/obj_0123456789abcdefghjkmnpqrstvwxyz",
+  "ciphertextSize": 80000000,
+  "jobID": "scan_0123456789abcdefghjkmnpqrstvwxyz",
+  "fileVersionID": "fver_0123456789abcdefghjkmnpqrstvwxyz",
+  "mediaKind": "image",
+  "manifestSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "kmsCiphertext": "AQIDBAUG",
+  "kmsCiphertextSHA256": "7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89",
+  "plaintextSize": 79999968,
+  "chunkSize": 67108864,
+  "noncePrefix": "CQgHBg",
+  "signedAt": "2026-09-04T11:55:00Z",
+  "seed": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "publicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "canonical": "plntir-r2-scan-v1\n0123456789abcdef0123456789abcdef\nplntir-files\nobjects/obj_0123456789abcdefghjkmnpqrstvwxyz\n80000000\nscan_0123456789abcdefghjkmnpqrstvwxyz\nfver_0123456789abcdefghjkmnpqrstvwxyz\nimage\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89\n79999968\n67108864\nCQgHBg\n2026-09-04T11:55:00Z\n",
+  "signature": "9CiTtgyauC--cIXFAfGNi3RpZV8mgt4_tp9JYvZUYDUaDeacnA7lJLt-oFd19rWAG8qH40-9Qvma-Dd1YJIuBQ"
+}

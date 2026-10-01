@@ -1,0 +1,84 @@
+.files-page {
+  max-inline-size: 72rem;
+}
+
+.file-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 2.5rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.file-action input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  clip-path: inset(50%);
+}
+.file-action-disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.file-toolbar {
+  justify-content: space-between;
+  margin-block-end: var(--space-3);
+}
+.file-toolbar .field {
+  flex: 1 1 18rem;
+}
+.file-toolbar input {
+  inline-size: 100%;
+}
+
+.file-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-1);
+  overflow: hidden;
+  background: var(--line);
+  list-style: none;
+}
+.file-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(10rem, auto) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  background: var(--surface);
+}
+.file-main {
+  display: grid;
+  gap: 0.2rem;
+  min-inline-size: 0;
+}
+.file-main strong {
+  overflow-wrap: anywhere;
+}
+.notice-inline {
+  margin: var(--space-2) 0 0;
+  color: var(--warning);
+}
+
+@media (max-width: 42rem) {
+  .file-action {
+    inline-size: 100%;
+  }
+  .file-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .file-row button {
+    inline-size: 100%;
+  }
+  .section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

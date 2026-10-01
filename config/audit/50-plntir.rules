@@ -1,0 +1,8 @@
+-w /etc/ssh/sshd_config -p wa -k sshd_config
+-w /etc/ssh/sshd_config.d -p wa -k sshd_config
+-w /etc/sudoers -p wa -k privilege
+-w /etc/sudoers.d -p wa -k privilege
+-w /etc/nftables.conf -p wa -k firewall
+-w /etc/systemd/system -p wa -k systemd_units
+-w /etc/docker -p wa -k docker_config
+-w /opt/plntir -p wa -k plntir_control_plane

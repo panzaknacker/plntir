@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "hostname": "mdm.plntir.example",
+  "release": {
+    "tag": "fleet-v4.89.2",
+    "source_archive": "https://github.com/fleetdm/fleet/archive/refs/tags/fleet-v4.89.2.tar.gz",
+    "source_archive_sha256": "1fb267b8a0b997b201bc833e13794d773c3dd75b5117101345219b63e1ff27e9",
+    "container_image": "fleetdm/fleet:v4.89.2@sha256:862604e5d2ae67bc7a2476645e11a0af0b153f4be496dcf69ca0dbc1cd56a71a"
+  },
+  "routes": [
+    {
+      "id": "apple-scep",
+      "path": "/mdm/apple/scep",
+      "methods": ["GET", "POST"],
+      "purpose": "Apple SCEP get-ca-caps/get-ca-cert and certificate enrollment",
+      "sources": [
+        "server/mdm/apple/apple_mdm.go:38-42",
+        "server/service/handler.go:1405-1410"
+      ]
+    },
+    {
+      "id": "apple-mdm",
+      "path": "/mdm/apple/mdm",
+      "methods": ["PUT"],
+      "purpose": "Certificate-authenticated Apple MDM check-in, command and result traffic",
+      "sources": [
+        "server/mdm/apple/apple_mdm.go:38-42",
+        "server/service/handler.go:1465-1507",
+        "server/service/integration_mdm_test.go:12645"
+      ]
+    },
+    {
+      "id": "apple-fleetd-installer",
+      "path": "/api/mdm/apple/installer",
+      "methods": ["GET", "HEAD"],
+      "purpose": "Token-authenticated fleetd installer delivered by an MDM command",
+      "sources": [
+        "server/mdm/apple/apple_mdm.go:56-57",
+        "server/service/handler.go:1063-1068"
+      ]
+    },
+    {
+      "id": "osquery-enroll",
+      "path": "/api/v1/osquery/enroll",
+      "methods": ["POST"],
+      "purpose": "osquery enrollment using the configured enrollment secret",
+      "sources": [
+        "orbit/pkg/osquery/flags.go:13-17",
+        "server/service/handler.go:1049-1055"
+      ]
+    },
+    {
+      "id": "osquery-config",
+      "path": "/api/v1/osquery/config",
+      "methods": ["POST"],
+      "purpose": "Host-authenticated osquery configuration refresh",
+      "sources": [
+        "orbit/pkg/osquery/flags.go:16-17",
+        "server/service/handler.go:972-980"
+      ]
+    },
+    {
+      "id": "osquery-distributed-read",
+      "path": "/api/v1/osquery/distributed/read",
+      "methods": ["POST"],
+      "purpose": "Host-authenticated distributed-query polling",
+      "sources": [
+        "orbit/pkg/osquery/flags.go:22-26",
+        "server/service/handler.go:981-982"
+      ]
+    },
+    {
+      "id": "osquery-distributed-write",
+      "path": "/api/v1/osquery/distributed/write",
+      "methods": ["POST"],
+      "purpose": "Host-authenticated distributed-query results",
+      "sources": [
+        "orbit/pkg/osquery/flags.go:25-26",
+        "server/service/handler.go:1008-1009"
+      ]
+    },
+    {
+      "id": "osquery-log",
+      "path": "/api/v1/osquery/log",
+      "methods": ["POST"],
+      "purpose": "Host-authenticated osquery status and result logs",
+      "sources": [
+        "orbit/pkg/osquery/flags.go:27-28",
+        "server/service/handler.go:1012-1013"
+      ]
+    },
+    {
+      "id": "orbit-enroll",
+      "path": "/api/fleet/orbit/enroll",
+      "methods": ["POST"],
+      "purpose": "Initial fleetd Orbit enrollment",
+      "sources": ["client/orbit_client.go:553-566"]
+    },
+    {
+      "id": "orbit-ping",
+      "path": "/api/fleet/orbit/ping",
+      "methods": ["HEAD"],
+      "purpose": "Unauthenticated Fleet capability probe without response content",
+      "sources": ["client/orbit_client.go:542-550"]
+    },
+    {
+      "id": "orbit-config",
+      "path": "/api/fleet/orbit/config",
+      "methods": ["POST"],
+      "purpose": "Orbit-node-key-authenticated fleetd configuration",
+      "sources": [
+        "client/orbit_client.go:378-415",
+        "server/service/handler.go:1025-1028"
+      ]
+    },
+    {
+      "id": "orbit-device-token",
+      "path": "/api/fleet/orbit/device_token",
+      "methods": ["POST"],
+      "purpose": "Orbit-node-key-authenticated device-token update",
+      "sources": [
+        "client/orbit_client.go:418-428",
+        "server/service/handler.go:1025-1028"
+      ]
+    },
+    {
+      "id": "orbit-device-mapping",
+      "path": "/api/fleet/orbit/device_mapping",
+      "methods": ["PUT"],
+      "purpose": "Orbit-node-key-authenticated user-to-device mapping",
+      "sources": [
+        "client/orbit_client.go:431-441",
+        "server/service/handler.go:1031-1033"
+      ]
+    },
+    {
+      "id": "orbit-script-request",
+      "path": "/api/fleet/orbit/scripts/request",
+      "methods": ["POST"],
+      "purpose": "Orbit-node-key-authenticated bounded script retrieval",
+      "sources": [
+        "client/orbit_client.go:444-454",
+        "server/service/handler.go:1029-1032"
+      ]
+    },
+    {
+      "id": "orbit-script-result",
+      "path": "/api/fleet/orbit/scripts/result",
+      "methods": ["POST"],
+      "purpose": "Orbit-node-key-authenticated bounded script result",
+      "sources": [
+        "client/orbit_client.go:456-465",
+        "server/service/handler.go:1029-1032"
+      ]
+    }
+  ],
+  "intentionally_excluded": [
+    {
+      "feature": "Fleet administrator and interactive UI",
+      "examples": ["/", "/login", "/api/v1/fleet/users", "/api/v1/fleet/hosts"]
+    },
+    {
+      "feature": "ABM/ADE, account-driven enrollment and OTA enrollment",
+      "examples": [
+        "/api/mdm/apple/enroll",
+        "/api/v1/fleet/ota_enrollment",
+        "/mdm/apple/service_discovery",
+        "/api/mdm/apple/account_driven_enroll"
+      ]
+    },
+    {
+      "feature": "Fleet Desktop and end-user device pages",
+      "examples": ["/api/fleet/device/ping", "/device"]
+    },
+    {
+      "feature": "Software install, setup experience and disk encryption",
+      "examples": [
+        "/api/fleet/orbit/software_install/package",
+        "/api/fleet/orbit/setup_experience/status",
+        "/api/fleet/orbit/disk_encryption_key",
+        "/api/fleet/orbit/luks_data"
+      ]
+    },
+    {
+      "feature": "File carving and YARA delivery",
+      "examples": [
+        "/api/v1/osquery/carve/begin",
+        "/api/v1/osquery/carve/block",
+        "/api/v1/osquery/yara/example"
+      ]
+    }
+  ]
+}

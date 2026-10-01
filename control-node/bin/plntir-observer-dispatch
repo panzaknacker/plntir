@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+
+if [[ ${SSH_ORIGINAL_COMMAND-} != status-v2 ]]; then
+    printf 'plntirctl observer command denied\n' >&2
+    exit 126
+fi
+
+exec </dev/null
+exec /opt/plntir/bin/status-v2

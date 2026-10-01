@@ -1,0 +1,28 @@
+---
+plntir_node_role: mdm
+plntir_enable_docker: true
+plntir_extra_packages:
+  - docker.io
+  - docker-compose-v2
+plntir_journal_max_use: 160M
+plntir_docker_internal_interfaces:
+  - plntir-mdm-be
+  - plntir-mdm-dev
+plntir_docker_egress_interfaces:
+  - plntir-mdm-eg
+plntir_input_tcp_rules:
+  - name: short-lived-ssh-certificates
+    port: 22
+    ipv4_sources: "{{ plntir_tunnel_connector_ipv4 }}"
+    ipv6_sources: "{{ plntir_tunnel_connector_ipv6 }}"
+plntir_docker_tcp_rules:
+  - name: fleet-private-admin
+    published_port: 1337
+    translated_port: 8080
+    ipv4_sources: "{{ plntir_relay_ipv4 }}"
+    ipv6_sources: "{{ plntir_relay_ipv6 }}"
+  - name: fleet-device-ingress
+    published_port: 1338
+    translated_port: 8080
+    ipv4_sources: "{{ plntir_tunnel_connector_ipv4 }}"
+    ipv6_sources: "{{ plntir_tunnel_connector_ipv6 }}"

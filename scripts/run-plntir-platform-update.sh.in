@@ -1,0 +1,110 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+if [[ ${EUID} -ne 0 ]]; then
+    printf 'Run with sudo from an authenticated Plntir administrator session.\n' >&2
+    exit 1
+fi
+
+readonly SHARE_DIR=/Users/Shared/.plntir/inbox/platform-update
+readonly ARCHIVE=${SHARE_DIR}/plntir-platform-update.tar.gz
+readonly SIGNATURE=${SHARE_DIR}/plntir-platform-update.tar.gz.sig
+readonly EXPECTED_CHECKSUM=@CHECKSUM@
+readonly EXPECTED_OWNER=@OWNER@
+readonly SIGNER_TYPE=@SIGNER_TYPE@
+readonly SIGNER_BLOB=@SIGNER_BLOB@
+readonly SIGNER_IDENTITY=plntir-release
+readonly SIGNATURE_NAMESPACE=plntir-endpoint-recovery
+
+if [[ -L ${SHARE_DIR} || ! -d ${SHARE_DIR} ]]; then
+    printf 'Unsafe or missing Plntir Platform Update directory.\n' >&2
+    exit 66
+fi
+if [[ $(/usr/bin/stat -f %Su "${SHARE_DIR}") != "${EXPECTED_OWNER}" ]]; then
+    printf 'Unexpected update-directory owner.\n' >&2
+    exit 77
+fi
+unsafe_path=$(/usr/bin/find "${SHARE_DIR}" -maxdepth 1 \( -perm -020 -o -perm -002 \) -print -quit)
+if [[ -n ${unsafe_path} ]]; then
+    printf 'Update directory contains a group/other-writable path: %s\n' "${unsafe_path}" >&2
+    exit 77
+fi
+if [[ ! -f ${ARCHIVE} || -L ${ARCHIVE} ]]; then
+    printf 'Unsafe or missing Plntir Platform Update archive.\n' >&2
+    exit 66
+fi
+if [[ ! -f ${SIGNATURE} || -L ${SIGNATURE} ]]; then
+    printf 'Unsafe or missing Plntir Platform Update signature.\n' >&2
+    exit 66
+fi
+
+stage=$(/usr/bin/mktemp -d /private/var/tmp/plntir-platform-update.XXXXXX)
+cleanup() {
+    case ${stage} in
+    /private/var/tmp/plntir-platform-update.*)
+        /bin/rm -rf "${stage}"
+        ;;
+    *)
+        printf 'Refusing unsafe temporary cleanup path.\n' >&2
+        ;;
+    esac
+}
+trap cleanup EXIT
+
+/bin/cp "${ARCHIVE}" "${stage}/update.tar.gz"
+/bin/cp "${SIGNATURE}" "${stage}/update.tar.gz.sig"
+actual_checksum=$(/usr/bin/shasum -a 256 "${stage}/update.tar.gz" | /usr/bin/awk '{print $1}')
+if [[ ${actual_checksum} != "${EXPECTED_CHECKSUM}" ]]; then
+    printf 'Checksum mismatch; Plntir Platform Update was not executed.\n' >&2
+    exit 65
+fi
+allowed_signers=${stage}/allowed_signers
+/usr/bin/printf '%s namespaces="%s" %s %s\n' \
+    "${SIGNER_IDENTITY}" "${SIGNATURE_NAMESPACE}" "${SIGNER_TYPE}" "${SIGNER_BLOB}" \
+    >"${allowed_signers}"
+/bin/chmod 0600 "${allowed_signers}"
+if ! /usr/bin/ssh-keygen -Y verify \
+    -f "${allowed_signers}" \
+    -I "${SIGNER_IDENTITY}" \
+    -n "${SIGNATURE_NAMESPACE}" \
+    -s "${stage}/update.tar.gz.sig" <"${stage}/update.tar.gz"; then
+    printf 'Release signature verification failed; nothing was executed.\n' >&2
+    exit 65
+fi
+
+readonly RECOVERY_ROOT='/Library/Application Support/Plntir/Recovery'
+readonly RECOVERY_PACKAGES=${RECOVERY_ROOT}/packages
+for directory in "${RECOVERY_ROOT%/Recovery}" "${RECOVERY_ROOT}" "${RECOVERY_PACKAGES}"; do
+    if [[ -L ${directory} || (-e ${directory} && ! -d ${directory}) ]]; then
+        printf 'Unsafe recovery-capsule directory: %s\n' "${directory}" >&2
+        exit 77
+    fi
+done
+/usr/bin/install -d -o root -g wheel -m 0755 "${RECOVERY_ROOT%/Recovery}"
+/usr/bin/install -d -o root -g wheel -m 0700 "${RECOVERY_ROOT}" "${RECOVERY_PACKAGES}"
+capsule_dir=${RECOVERY_PACKAGES}/${EXPECTED_CHECKSUM}
+if [[ -L ${capsule_dir} || (-e ${capsule_dir} && ! -d ${capsule_dir}) ]]; then
+    printf 'Unsafe recovery capsule path.\n' >&2
+    exit 77
+fi
+/usr/bin/install -d -o root -g wheel -m 0700 "${capsule_dir}"
+/usr/bin/install -o root -g wheel -m 0600 \
+    "${stage}/update.tar.gz" "${capsule_dir}/plntir-platform-update.tar.gz"
+/usr/bin/install -o root -g wheel -m 0600 \
+    "${stage}/update.tar.gz.sig" "${capsule_dir}/plntir-platform-update.tar.gz.sig"
+/usr/bin/install -o root -g wheel -m 0644 \
+    "${allowed_signers}" "${capsule_dir}/plntir-release-allowed-signers"
+current_tmp=${RECOVERY_ROOT}/.current-package.$$
+/usr/bin/printf '%s\n' "${EXPECTED_CHECKSUM}" >"${current_tmp}"
+/usr/sbin/chown root:wheel "${current_tmp}"
+/bin/chmod 0644 "${current_tmp}"
+/bin/mv -f "${current_tmp}" "${RECOVERY_ROOT}/current-package"
+
+/usr/bin/tar -xzf "${stage}/update.tar.gz" -C "${stage}"
+if [[ ! -d ${stage}/plntir-platform-update || -L ${stage}/plntir-platform-update ]]; then
+    printf 'Archive layout is invalid.\n' >&2
+    exit 65
+fi
+/usr/sbin/chown -R root:wheel "${stage}/plntir-platform-update"
+/bin/chmod -R go-w "${stage}/plntir-platform-update"
+"${stage}/plntir-platform-update/install.sh"

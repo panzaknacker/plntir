@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 077
+
+readonly CONFIG_LOADER=/opt/plntir/lib/managed-endpoint-config.sh
+readonly RETRIEVE=/opt/plntir/bin/plntir-endpoint-retrieve
+readonly HEALTH=/opt/plntir/bin/plntir-endpoint-check
+readonly SECURITY=/opt/plntir/bin/plntir-security-collect
+readonly RETRIEVED_ROOT=/var/lib/plntir/retrieved
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit "${2:-64}"
+}
+
+[[ $(/usr/bin/id -un) == admin ]] || fail 'plntir-web-action must run as the control-node operator' 77
+[[ -r ${CONFIG_LOADER} && -x ${RETRIEVE} ]] || fail 'Plntir action dependencies are unavailable' 69
+# shellcheck source=/dev/null
+source "${CONFIG_LOADER}"
+load_managed_mac_config
+
+decode_path() {
+    local token=$1 decoded canonical
+    ((${#token} >= 4 && ${#token} <= 5500)) || fail 'invalid path token'
+    [[ ${token} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || fail 'invalid path token'
+    decoded=$(printf '%s' "${token}" | /usr/bin/base64 -d) || fail 'invalid path token'
+    canonical=$(printf '%s' "${decoded}" | /usr/bin/base64 -w0)
+    [[ ${canonical} == "${token}" ]] || fail 'non-canonical path token'
+    [[ ${decoded} != *$'\n'* && ${decoded} != *$'\r'* ]] || fail 'invalid managed path'
+    [[ ${decoded} == "${MAC_MANAGED_HOME}" || ${decoded} == "${MAC_MANAGED_HOME}"/* ]] ||
+        fail 'path outside managed home' 77
+    printf '%s' "${decoded}"
+}
+
+[[ $# -ge 1 ]] || fail 'missing action'
+readonly ACTION=$1
+shift
+exec </dev/null
+
+case ${ACTION} in
+list-b64 | preview-b64 | probe-b64 | export-b64)
+    [[ $# -eq 1 ]] || fail 'path action requires one token'
+    requested=$(decode_path "$1")
+    case ${ACTION} in
+    list-b64)
+        /usr/bin/logger -t plntir-web-action -- 'action=list'
+        exec "${RETRIEVE}" --list "${requested}"
+        ;;
+    preview-b64)
+        /usr/bin/logger -t plntir-web-action -- 'action=preview'
+        exec "${RETRIEVE}" --preview "${requested}"
+        ;;
+    probe-b64)
+        /usr/bin/logger -t plntir-web-action -- 'action=probe'
+        exec "${RETRIEVE}" --probe "${requested}"
+        ;;
+    export-b64)
+        /usr/bin/logger -t plntir-web-action -- 'action=export'
+        archive=$(/usr/bin/nice -n 10 "${RETRIEVE}" "${requested}")
+        [[ ${archive} == "${RETRIEVED_ROOT}"/* && -f ${archive} && ! -L ${archive} ]] ||
+            fail 'retrieval returned an unsafe archive path' 74
+        relative=${archive#"${RETRIEVED_ROOT}"/}
+        archive_bytes=$(/usr/bin/stat -Lc %s "${archive}")
+        [[ ${archive_bytes} =~ ^[0-9]+$ && $((10#${archive_bytes})) -gt 0 ]] ||
+            fail 'archive size check failed' 74
+        digest=$(/usr/bin/sha256sum "${archive}" | /usr/bin/awk '{print $1}')
+        [[ ${digest} =~ ^[a-f0-9]{64}$ ]] || fail 'archive checksum failed' 74
+        /usr/bin/jq -cn \
+            --arg source "${requested}" \
+            --arg archive "${relative}" \
+            --arg sha256 "${digest}" \
+            --argjson archive_bytes "${archive_bytes}" \
+            '{ok:true,source:$source,archive:$archive,archive_bytes:$archive_bytes,sha256:$sha256}'
+        ;;
+    esac
+    ;;
+safari-history)
+    [[ $# -eq 2 && $1 =~ ^[0-9]{1,4}$ && $2 =~ ^[0-9]{1,4}$ ]] ||
+        fail 'safari-history requires HOURS LIMIT'
+    hours=$((10#$1))
+    limit=$((10#$2))
+    ((hours >= 1 && hours <= 8760 && limit >= 1 && limit <= 5000)) ||
+        fail 'Safari range is outside policy'
+    /usr/bin/logger -t plntir-web-action -- 'action=safari-history'
+    exec "${RETRIEVE}" --safari-history "${hours}" "${limit}"
+    ;;
+refresh)
+    [[ $# -eq 0 ]] || fail 'refresh accepts no arguments'
+    /usr/bin/logger -t plntir-web-action -- 'action=refresh'
+    health_rc=0
+    security_rc=0
+    "${HEALTH}" >/dev/null 2>&1 || health_rc=$?
+    "${SECURITY}" >/dev/null 2>&1 || security_rc=$?
+    /usr/bin/jq -cn \
+        --argjson health_rc "${health_rc}" \
+        --argjson security_rc "${security_rc}" \
+        '{ok:($health_rc == 0 and $security_rc == 0),health_rc:$health_rc,security_rc:$security_rc}'
+    ((health_rc == 0 && security_rc == 0)) || exit 74
+    ;;
+*)
+    fail 'Plntir web action denied' 126
+    ;;
+esac

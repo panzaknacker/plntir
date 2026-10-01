@@ -1,0 +1,12 @@
+---
+plntir_node_role: core
+plntir_journal_max_use: 192M
+plntir_input_tcp_rules:
+  - name: short-lived-ssh-certificates
+    port: 22
+    ipv4_sources: "{{ plntir_tunnel_connector_ipv4 }}"
+    ipv6_sources: "{{ plntir_tunnel_connector_ipv6 }}"
+  - name: cloudflare-core-origin
+    port: 8080
+    ipv4_sources: "{{ plntir_tunnel_connector_ipv4 }}"
+    ipv6_sources: "{{ plntir_tunnel_connector_ipv6 }}"

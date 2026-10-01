@@ -1,0 +1,212 @@
+---
+- name: Enforce the independent Wazuh installation gate
+  ansible.builtin.assert:
+    that:
+      - plntir_node_role == 'siem'
+      - inventory_hostname == 'plntir-siem-01'
+      - plntir_wazuh_release_version == '4.14.7'
+      - >-
+        (ansible_check_mode and (plntir_wazuh_check_mode_authorized | bool)) or
+        ((not ansible_check_mode) and (plntir_wazuh_install_authorized | bool))
+      - plntir_wazuh_immediate_approval_reference is match('^approved-[0-9]{8}T[0-9]{6}Z-wazuh-[a-z0-9-]{3,32}$')
+      - plntir_wazuh_release_attestation_sha256 is match('^[a-f0-9]{64}$')
+      - plntir_wazuh_offline_bundle_sha256 is match('^[a-f0-9]{64}$')
+      - plntir_wazuh_prerequisites_qualification_sha256 is match('^[a-f0-9]{64}$')
+      - plntir_wazuh_integrity_runtime_sha256 is match('^[a-f0-9]{64}$')
+      - plntir_wazuh_ingest_qualification_sha256 is match('^[a-f0-9]{64}$')
+      - plntir_wazuh_artifact_root | length > 0
+      - plntir_wazuh_release_manifest_path | length > 0
+      - plntir_wazuh_release_signature_path | length > 0
+      - plntir_wazuh_release_public_key_path | length > 0
+      - plntir_wazuh_alert_routes_qualified | bool
+      - plntir_wazuh_rolesanywhere_qualified | bool
+      - not (plntir_wazuh_enrollment_window_authorized | bool)
+    fail_msg: >-
+      Wazuh has its own immediate gate. It requires the signed 4.14.7 release,
+      signed prerequisite/runtime releases, a rotation/restart/correlation
+      ingest qualification, verified Roles Anywhere and email/SMS routes, and
+      a closed enrollment window.
+
+- name: Prove the SIEM network boundary before staging software
+  ansible.builtin.assert:
+    that:
+      - plntir_output_policy == 'drop'
+      - (plntir_input_tcp_rules | selectattr('port', 'equalto', 1514) | list | length) == 1
+      - (plntir_input_tcp_rules | selectattr('port', 'equalto', 443) | list | length) == 1
+      - (plntir_input_tcp_rules | selectattr('port', 'equalto', 1515) | list | length) == 0
+      - (plntir_input_tcp_rules | selectattr('port', 'equalto', 55000) | list | length) == 0
+      - (plntir_input_tcp_rules | selectattr('port', 'equalto', 9200) | list | length) == 0
+      - (plntir_output_tcp_rules | selectattr('port', 'equalto', 3128) | list | length) == 1
+      - (plntir_output_tcp_rules | selectattr('port', 'equalto', 2525) | list | length) == 1
+      - (plntir_output_udp_rules | selectattr('port', 'equalto', 123) | list | length) == 1
+      - plntir_relay_ipv4 | length == 1
+      - plntir_relay_ipv6 | length == 0
+    fail_msg: >-
+      SIEM requires one exact private relay, default-drop egress, private proxy,
+      SMTP and time paths, agent event ingress, and no public/API/enrollment rule.
+
+- name: Verify the signed release on the controller before copying
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ role_path }}/files/verify-release.py"
+      - --manifest
+      - "{{ plntir_wazuh_release_manifest_path }}"
+      - --signature
+      - "{{ plntir_wazuh_release_signature_path }}"
+      - --public-key
+      - "{{ plntir_wazuh_release_public_key_path }}"
+      - --artifact-root
+      - "{{ plntir_wazuh_artifact_root }}"
+      - --expected-version
+      - "{{ plntir_wazuh_release_version }}"
+      - --expected-manifest-sha256
+      - "{{ plntir_wazuh_release_attestation_sha256 }}"
+      - --expected-bundle-sha256
+      - "{{ plntir_wazuh_offline_bundle_sha256 }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Create the root-owned Wazuh release staging directory
+  ansible.builtin.file:
+    path: /var/lib/plntir-wazuh-release
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Stage the public release verifier and attestations
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/var/lib/plntir-wazuh-release/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - src: "{{ role_path }}/files/verify-release.py"
+      dest: verify-release.py
+      mode: "0700"
+    - src: "{{ plntir_wazuh_release_manifest_path }}"
+      dest: release-manifest.json
+      mode: "0600"
+    - src: "{{ plntir_wazuh_release_signature_path }}"
+      dest: release-manifest.sig
+      mode: "0600"
+    - src: "{{ plntir_wazuh_release_public_key_path }}"
+      dest: release-signing-key.pub
+      mode: "0600"
+
+- name: Stage the public Wazuh installer and package bundle
+  ansible.builtin.copy:
+    src: "{{ plntir_wazuh_artifact_root }}/{{ item.src }}"
+    dest: "/var/lib/plntir-wazuh-release/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - src: wazuh-install.sh
+      dest: wazuh-install.sh
+      mode: "0700"
+    - src: wazuh-offline.tar.gz
+      dest: wazuh-offline.tar.gz
+      mode: "0600"
+
+- name: Stage generated Wazuh certificates and passwords without logging
+  ansible.builtin.copy:
+    src: "{{ plntir_wazuh_artifact_root }}/wazuh-install-files.tar"
+    dest: /var/lib/plntir-wazuh-release/wazuh-install-files.tar
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Reverify the immutable staged release before root execution
+  ansible.builtin.command:
+    argv:
+      - /var/lib/plntir-wazuh-release/verify-release.py
+      - --manifest
+      - /var/lib/plntir-wazuh-release/release-manifest.json
+      - --signature
+      - /var/lib/plntir-wazuh-release/release-manifest.sig
+      - --public-key
+      - /var/lib/plntir-wazuh-release/release-signing-key.pub
+      - --artifact-root
+      - /var/lib/plntir-wazuh-release
+      - --expected-version
+      - "{{ plntir_wazuh_release_version }}"
+      - --expected-manifest-sha256
+      - "{{ plntir_wazuh_release_attestation_sha256 }}"
+      - --expected-bundle-sha256
+      - "{{ plntir_wazuh_offline_bundle_sha256 }}"
+  check_mode: false
+  changed_when: false
+
+- name: Install the all-in-one Wazuh release strictly from offline artifacts
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - /var/lib/plntir-wazuh-release/wazuh-install.sh
+      - --offline-installation
+      - -a
+    chdir: /var/lib/plntir-wazuh-release
+    creates: /var/ossec/bin/wazuh-control
+  environment:
+    http_proxy: ""
+    https_proxy: ""
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    NO_PROXY: "*"
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Verify exact installed Wazuh package versions
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/dpkg-query
+      - -W
+      - -f=${Version}
+      - "{{ item }}"
+  loop:
+    - wazuh-manager
+    - wazuh-indexer
+    - wazuh-dashboard
+  register: plntir_wazuh_package_version
+  changed_when: false
+  failed_when: >-
+    plntir_wazuh_package_version.stdout is not
+    match('^4\.14\.7([.-]|$)')
+  when: not ansible_check_mode
+
+- name: Verify all Wazuh services are active
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - is-active
+      - "{{ item }}"
+  loop:
+    - wazuh-manager.service
+    - wazuh-indexer.service
+    - wazuh-dashboard.service
+    - filebeat.service
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the enforced SIEM output boundary
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/nft
+      - list
+      - chain
+      - inet
+      - plntir_filter
+      - output
+  register: plntir_wazuh_output_firewall
+  changed_when: false
+  failed_when: >-
+    ('policy drop' not in plntir_wazuh_output_firewall.stdout) or
+    ('tcp dport 3128 accept' not in plntir_wazuh_output_firewall.stdout) or
+    ('tcp dport 2525 accept' not in plntir_wazuh_output_firewall.stdout) or
+    ('udp dport 123 accept' not in plntir_wazuh_output_firewall.stdout)

@@ -1,0 +1,6 @@
+Defaults!/usr/local/libexec/plntir-secure-archive secure_path=/usr/bin:/bin:/usr/sbin:/sbin
+
+Cmnd_Alias PLNTIR_SECURE_ARCHIVE = /usr/local/libexec/plntir-secure-archive plan-v1, \
+    /usr/local/libexec/plntir-secure-archive stream-v1
+
+@AGENT_USER@ ALL=(root) NOPASSWD: PLNTIR_SECURE_ARCHIVE

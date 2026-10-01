@@ -1,0 +1,18 @@
+{
+  "listen": "100.101.0.5:8443",
+  "allowed_mesh_cidr": "100.96.0.0/12",
+  "allowed_hosts": ["100.101.0.5:8443"],
+  "tls_cert_file": "/etc/plntir/web/tls.crt",
+  "tls_key_file": "/etc/plntir/web/tls.key",
+  "auth_file": "/etc/plntir/web/auth.json",
+  "status_command": ["/opt/plntir/bin/status-v2"],
+  "action_command": ["/usr/bin/sudo", "-n", "-u", "admin", "/opt/plntir/bin/plntir-web-action"],
+  "monitor_root": "/var/lib/plntir/monitor",
+  "retrieved_root": "/var/lib/plntir/retrieved",
+  "audit_file": "/var/lib/plntir-web/audit.jsonl",
+  "managed_home": "/Users/plntir-operator",
+  "refresh_seconds": 10,
+  "session_minutes": 480,
+  "private_session_minutes": 10,
+  "max_response_bytes": 8388608
+}

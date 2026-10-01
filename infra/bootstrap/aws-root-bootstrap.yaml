@@ -1,0 +1,758 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Plntir temporary builder and dormant owner breakglass identities. This stack
+  creates no access keys and cannot register FIDO devices; those are console-only.
+
+Parameters:
+  ProtectedWatchArn:
+    Type: String
+    AllowedPattern: '^arn:aws:lightsail:eu-central-1:[0-9]{12}:Instance/[0-9a-f-]{36}$'
+    Description: Exact ARN of the pre-existing production watch instance.
+  AlertEmail:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[^@[:space:]]+@[^@[:space:]]+$'
+    Description: Optional breakglass alert email; must be confirmed before activation.
+  AlertPhoneE164:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^\+[1-9][0-9]{7,14}$'
+    Description: Optional E.164 SMS destination; must be tested before activation.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+  HasAlertPhone: !Not [!Equals [!Ref AlertPhoneE164, '']]
+
+Resources:
+  BuilderUser:
+    Type: AWS::IAM::User
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserName: plntir-builder
+      Path: /plntir/bootstrap/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess
+      Tags:
+        - {Key: Project, Value: plntir}
+        - {Key: Lifecycle, Value: temporary}
+      Policies:
+        - PolicyName: PlntirBuilderSelfCredentials
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InspectOwnIdentity
+                Effect: Allow
+                Action:
+                  - iam:GetUser
+                  - iam:ListMFADevices
+                  - iam:ChangePassword
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/plntir/bootstrap/plntir-builder
+              - Sid: ReadPasswordPolicy
+                Effect: Allow
+                Action: iam:GetAccountPasswordPolicy
+                Resource: '*'
+              - Sid: RegisterOwnHardwareMFA
+                Effect: Allow
+                Action:
+                  - iam:EnableMFADevice
+                  - iam:ResyncMFADevice
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/plntir/bootstrap/plntir-builder
+              - Sid: DenyLongLivedKeys
+                Effect: Deny
+                Action:
+                  - iam:CreateAccessKey
+                  - iam:UpdateAccessKey
+                Resource: '*'
+
+  OwnerUser:
+    Type: AWS::IAM::User
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserName: plntir-owner
+      Path: /plntir/owner/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess
+      Tags:
+        - {Key: Project, Value: plntir}
+        - {Key: Lifecycle, Value: permanent}
+        - {Key: plntir-breakglass, Value: disabled}
+      Policies:
+        - PolicyName: PlntirOwnerSelfCredentials
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InspectOwnIdentity
+                Effect: Allow
+                Action:
+                  - iam:GetUser
+                  - iam:ListMFADevices
+                  - iam:ChangePassword
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/plntir/owner/plntir-owner
+              - Sid: ReadPasswordPolicy
+                Effect: Allow
+                Action: iam:GetAccountPasswordPolicy
+                Resource: '*'
+              - Sid: RegisterOwnHardwareMFA
+                Effect: Allow
+                Action:
+                  - iam:EnableMFADevice
+                  - iam:ResyncMFADevice
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/plntir/owner/plntir-owner
+              - Sid: AssumeBreakglassOnlyWhenActivated
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/plntir/breakglass/PlntirBreakGlass
+              - Sid: DenyLongLivedKeys
+                Effect: Deny
+                Action:
+                  - iam:CreateAccessKey
+                  - iam:UpdateAccessKey
+                Resource: '*'
+
+  ServiceRolePermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ManagedPolicyName: PlntirServiceBoundary
+      Path: /plntir/boundary/
+      Description: Maximum runtime permissions for every builder-created Plntir service role.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RuntimeIdentityInspection
+            Effect: Allow
+            Action: sts:GetCallerIdentity
+            Resource: '*'
+          - Sid: SSMManagedNodeChannels
+            Effect: Allow
+            Action:
+              - ssm:UpdateInstanceInformation
+              - ssmmessages:CreateControlChannel
+              - ssmmessages:CreateDataChannel
+              - ssmmessages:OpenControlChannel
+              - ssmmessages:OpenDataChannel
+              - ec2messages:AcknowledgeMessage
+              - ec2messages:DeleteMessage
+              - ec2messages:FailMessage
+              - ec2messages:GetEndpoint
+              - ec2messages:GetMessages
+              - ec2messages:SendReply
+            Resource: '*'
+          - Sid: PlntirKMSRuntimeOnly
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:GenerateDataKeyWithoutPlaintext
+              - kms:ReEncryptFrom
+              - kms:ReEncryptTo
+            Resource: !Sub arn:${AWS::Partition}:kms:eu-central-1:${AWS::AccountId}:key/*
+            Condition:
+              StringEquals:
+                aws:ResourceTag/Project: plntir
+          - Sid: PlntirQueueRuntimeOnly
+            Effect: Allow
+            Action:
+              - sqs:ChangeMessageVisibility
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:GetQueueUrl
+              - sqs:ReceiveMessage
+              - sqs:SendMessage
+            Resource: !Sub arn:${AWS::Partition}:sqs:eu-central-1:${AWS::AccountId}:plntir-*
+          - Sid: PlntirBucketRuntimeOnly
+            Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:GetObject
+              - s3:GetObjectAttributes
+              - s3:GetObjectVersion
+              - s3:ListBucket
+              - s3:ListBucketMultipartUploads
+              - s3:ListMultipartUploadParts
+              - s3:PutObject
+              - s3:PutObjectRetention
+            Resource:
+              - !Sub arn:${AWS::Partition}:s3:::plntir-*-${AWS::AccountId}
+              - !Sub arn:${AWS::Partition}:s3:::plntir-*-${AWS::AccountId}/*
+          - Sid: PlntirAlertsOnly
+            Effect: Allow
+            Action: sns:Publish
+            Resource: !Sub arn:${AWS::Partition}:sns:eu-central-1:${AWS::AccountId}:plntir-*
+          - Sid: StructuredServiceLogsOnly
+            Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub arn:${AWS::Partition}:logs:eu-central-1:${AWS::AccountId}:log-group:/aws/*
+
+  BootstrapAdminRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: PlntirBootstrapAdmin
+      Path: /plntir/bootstrap/
+      MaxSessionDuration: 43200
+      Tags:
+        - {Key: Project, Value: plntir}
+        - {Key: Lifecycle, Value: temporary}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: BuilderWithMFAOnly
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt BuilderUser.Arn
+            Action: sts:AssumeRole
+            Condition:
+              Bool:
+                aws:MultiFactorAuthPresent: 'true'
+      Policies:
+        - PolicyName: PlntirBootstrapGuardrails
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DenyOtherRegions
+                Effect: Deny
+                NotAction:
+                  - iam:*
+                  - sts:*
+                  - budgets:*
+                  - pricing:*
+                  - account:ListRegions
+                  - cloudfront:ListDistributions
+                Resource: '*'
+                Condition:
+                  StringNotEquals:
+                    aws:RequestedRegion: eu-central-1
+              - Sid: DenyPublicIngressAndOutOfScopeServices
+                Effect: Deny
+                Action:
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - lightsail:OpenInstancePublicPorts
+                  - lightsail:PutInstancePublicPorts
+                  - rds:*
+                  - redshift:*
+                  - elasticache:*
+                  - eks:*
+                  - organizations:*
+                  - account:CloseAccount
+                  - iam:CreateAccessKey
+                  - iam:UpdateAccessKey
+                  - iam:CreateUser
+                Resource: '*'
+              - Sid: ProtectExistingWatchFromMutation
+                Effect: Deny
+                Action:
+                  - lightsail:AttachDisk
+                  - lightsail:AttachStaticIp
+                  - lightsail:CloseInstancePublicPorts
+                  - lightsail:DeleteInstance
+                  - lightsail:DetachDisk
+                  - lightsail:DetachStaticIp
+                  - lightsail:PeerVpc
+                  - lightsail:RebootInstance
+                  - lightsail:StartInstance
+                  - lightsail:StopInstance
+                  - lightsail:UpdateInstanceMetadataOptions
+                Resource: !Ref ProtectedWatchArn
+        - PolicyName: PlntirBootstrapReadAndPlan
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadInventoryAndPricing
+                Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                  - pricing:GetProducts
+                  - pricing:DescribeServices
+                  - pricing:GetAttributeValues
+                  - resourcegroupstaggingapi:GetResources
+                  - resourcegroupstaggingapi:GetTagKeys
+                  - resourcegroupstaggingapi:GetTagValues
+                  - tag:GetResources
+                  - tag:GetTagKeys
+                  - lightsail:Get*
+                  - ec2:Describe*
+                  - s3:GetAccountPublicAccessBlock
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                  - s3:GetBucketTagging
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketObjectLockConfiguration
+                  - kms:List*
+                  - kms:DescribeKey
+                  - kms:GetKeyPolicy
+                  - kms:GetKeyRotationStatus
+                  - lambda:List*
+                  - lambda:Get*
+                  - sns:List*
+                  - sns:Get*
+                  - sqs:ListQueues
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:ListDeadLetterSourceQueues
+                  - sqs:ListQueueTags
+                  - ssm:Describe*
+                  - ssm:Get*
+                  - ssm:List*
+                  - cloudformation:Describe*
+                  - cloudformation:Get*
+                  - cloudformation:List*
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - cloudtrail:GetEventSelectors
+                  - logs:Describe*
+                  - logs:GetLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:ListTagsForResource
+                  - cloudwatch:Describe*
+                  - cloudwatch:Get*
+                  - cloudwatch:List*
+                  - events:DescribeRule
+                  - events:List*
+                  - budgets:Describe*
+                  - backup:List*
+                  - backup:Get*
+                  - acm:ListCertificates
+                  - acm:DescribeCertificate
+                  - apigateway:GET
+                  - rolesanywhere:List*
+                  - rolesanywhere:Get*
+                Resource: '*'
+        - PolicyName: PlntirBootstrapInfrastructure
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: LightsailPlntirBuild
+                Effect: Allow
+                Action:
+                  - lightsail:AllocateStaticIp
+                  - lightsail:AttachStaticIp
+                  - lightsail:CloseInstancePublicPorts
+                  - lightsail:CreateDisk
+                  - lightsail:CreateDiskSnapshot
+                  - lightsail:CreateInstanceSnapshot
+                  - lightsail:CreateInstances
+                  - lightsail:CreateInstancesFromSnapshot
+                  - lightsail:DeleteDisk
+                  - lightsail:DeleteDiskSnapshot
+                  - lightsail:DeleteInstance
+                  - lightsail:DeleteInstanceSnapshot
+                  - lightsail:DeleteStaticIp
+                  - lightsail:DetachDisk
+                  - lightsail:DetachStaticIp
+                  - lightsail:RebootInstance
+                  - lightsail:StartInstance
+                  - lightsail:StopInstance
+                  - lightsail:TagResource
+                  - lightsail:UntagResource
+                  - lightsail:UnpeerVpc
+                  - lightsail:UpdateInstanceMetadataOptions
+                Resource: '*'
+              - Sid: EC2PlntirNodesAndPrivateNetwork
+                Effect: Allow
+                Action:
+                  - ec2:AssociateRouteTable
+                  - ec2:AttachInternetGateway
+                  - ec2:AssociateVpcCidrBlock
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:CreateInternetGateway
+                  - ec2:CreateNetworkInterface
+                  - ec2:CreateRoute
+                  - ec2:CreateRouteTable
+                  - ec2:CreateSecurityGroup
+                  - ec2:CreateSubnet
+                  - ec2:CreateTags
+                  - ec2:CreateVpc
+                  - ec2:DeleteInternetGateway
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DeleteRoute
+                  - ec2:DeleteRouteTable
+                  - ec2:DeleteSecurityGroup
+                  - ec2:DeleteSubnet
+                  - ec2:DeleteTags
+                  - ec2:DeleteVpc
+                  - ec2:DetachInternetGateway
+                  - ec2:DisassociateVpcCidrBlock
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:ModifyNetworkInterfaceAttribute
+                  - ec2:ModifySubnetAttribute
+                  - ec2:ModifyVpcAttribute
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:RunInstances
+                  - ec2:StartInstances
+                  - ec2:StopInstances
+                  - ec2:TerminateInstances
+                Resource: '*'
+              - Sid: EC2PlntirSizeGuard
+                Effect: Deny
+                Action: ec2:RunInstances
+                Resource: !Sub arn:${AWS::Partition}:ec2:eu-central-1:${AWS::AccountId}:instance/*
+                Condition:
+                  StringNotEquals:
+                    ec2:InstanceType:
+                      - t3.nano
+                      - t3.small
+                      - t4g.nano
+                      - c7i-flex.xlarge
+              - Sid: PlntirBuckets
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:PutBucketEncryption
+                  - s3:PutBucketLifecycleConfiguration
+                  - s3:PutBucketLogging
+                  - s3:PutBucketNotification
+                  - s3:PutBucketObjectLockConfiguration
+                  - s3:PutBucketOwnershipControls
+                  - s3:PutBucketPolicy
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketTagging
+                  - s3:PutBucketVersioning
+                  - s3:GetBucketPolicy
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:ListBucket
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::plntir-*-${AWS::AccountId}
+                  - !Sub arn:${AWS::Partition}:s3:::plntir-*-${AWS::AccountId}/*
+              - Sid: PlntirKMS
+                Effect: Allow
+                Action:
+                  - kms:CreateAlias
+                  - kms:CreateGrant
+                  - kms:CreateKey
+                  - kms:DeleteAlias
+                  - kms:DisableKey
+                  - kms:EnableKey
+                  - kms:EnableKeyRotation
+                  - kms:PutKeyPolicy
+                  - kms:ScheduleKeyDeletion
+                  - kms:TagResource
+                  - kms:UntagResource
+                  - kms:UpdateAlias
+                  - kms:UpdateKeyDescription
+                Resource: '*'
+              - Sid: UseTaggedPlntirStateKeyThroughS3
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: plntir
+                    kms:ViaService: s3.eu-central-1.amazonaws.com
+              - Sid: PlntirFunctionsMessagingAndTelemetry
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - sqs:CreateQueue
+                  - sqs:DeleteQueue
+                  - sqs:SetQueueAttributes
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                  - events:DeleteRule
+                  - events:DisableRule
+                  - events:EnableRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:DeleteRetentionPolicy
+                  - logs:PutRetentionPolicy
+                  - logs:PutResourcePolicy
+                  - logs:DeleteResourcePolicy
+                  - logs:TagResource
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:PutMetricAlarm
+                  - budgets:CreateBudget
+                  - budgets:DeleteBudget
+                  - budgets:ModifyBudget
+                Resource: '*'
+              - Sid: PlntirRegionalHTTPAPIs
+                Effect: Allow
+                Action:
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub arn:${AWS::Partition}:apigateway:eu-central-1::/apis
+                  - !Sub arn:${AWS::Partition}:apigateway:eu-central-1::/apis/*
+                  - !Sub arn:${AWS::Partition}:apigateway:eu-central-1::/domainnames
+                  - !Sub arn:${AWS::Partition}:apigateway:eu-central-1::/domainnames/*
+                  - !Sub arn:${AWS::Partition}:apigateway:eu-central-1::/tags/*
+              - Sid: PlntirRolesAnywhereRuntimeIdentity
+                Effect: Allow
+                Action:
+                  - rolesanywhere:CreateProfile
+                  - rolesanywhere:CreateTrustAnchor
+                  - rolesanywhere:DeleteProfile
+                  - rolesanywhere:DeleteTrustAnchor
+                  - rolesanywhere:DisableProfile
+                  - rolesanywhere:DisableTrustAnchor
+                  - rolesanywhere:EnableProfile
+                  - rolesanywhere:EnableTrustAnchor
+                  - rolesanywhere:TagResource
+                  - rolesanywhere:UntagResource
+                  - rolesanywhere:UpdateProfile
+                  - rolesanywhere:UpdateTrustAnchor
+                Resource: '*'
+              - Sid: PlntirCloudFormation
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:UpdateStack
+                  - cloudformation:ValidateTemplate
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:eu-central-1:${AWS::AccountId}:stack/plntir-*/*
+        - PolicyName: PlntirBootstrapIAM
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageServiceRolesOnly
+                Effect: Allow
+                Action:
+                  - iam:CreateInstanceProfile
+                  - iam:CreatePolicy
+                  - iam:CreatePolicyVersion
+                  - iam:DeleteInstanceProfile
+                  - iam:DeletePolicy
+                  - iam:DeletePolicyVersion
+                  - iam:DeleteRole
+                  - iam:DeleteRolePolicy
+                  - iam:GetInstanceProfile
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListInstanceProfilesForRole
+                  - iam:ListPolicyVersions
+                  - iam:ListRolePolicies
+                  - iam:ListRoleTags
+                  - iam:PutRolePolicy
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:SetDefaultPolicyVersion
+                  - iam:TagInstanceProfile
+                  - iam:TagPolicy
+                  - iam:TagRole
+                  - iam:UntagInstanceProfile
+                  - iam:UntagPolicy
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:UpdateRole
+                  - iam:UpdateRoleDescription
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/plntir/service/*
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/plntir/*
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/plntir-*
+              - Sid: CreateBoundedServiceRolesOnly
+                Effect: Allow
+                Action: iam:CreateRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/plntir/service/*
+                Condition:
+                  ArnEquals:
+                    iam:PermissionsBoundary: !Ref ServiceRolePermissionsBoundary
+              - Sid: AttachOnlySSMCoreToBoundedRoles
+                Effect: Allow
+                Action:
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/plntir/service/*
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+              - Sid: PassOnlyPlntirServiceRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/plntir/service/*
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - ec2.amazonaws.com
+                      - lambda.amazonaws.com
+                      - rolesanywhere.amazonaws.com
+              - Sid: CreateRolesAnywhereServiceLinkedRoleOnly
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/rolesanywhere.amazonaws.com/*
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName: rolesanywhere.amazonaws.com
+
+  BuilderAssumeRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: PlntirAssumeBootstrapAdmin
+      Users: [!Ref BuilderUser]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt BootstrapAdminRole.Arn
+            Condition:
+              Bool:
+                aws:MultiFactorAuthPresent: 'true'
+
+  BreakGlassRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: PlntirBreakGlass
+      Path: /plntir/breakglass/
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - {Key: Project, Value: plntir}
+        - {Key: Activation, Value: disabled}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DormantOwnerWithMFA
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/plntir/owner/plntir-owner
+            Action: sts:AssumeRole
+            Condition:
+              Bool:
+                aws:MultiFactorAuthPresent: 'true'
+              StringEquals:
+                aws:PrincipalTag/plntir-breakglass: enabled
+      Policies:
+        - PolicyName: PlntirBreakGlassPermanentDeny
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Deny
+                Action:
+                  - iam:CreateAccessKey
+                  - iam:UpdateAccessKey
+                  - organizations:LeaveOrganization
+                  - account:CloseAccount
+                Resource: '*'
+
+  BreakGlassAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: plntir-breakglass-alerts
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - {Key: Project, Value: plntir}
+
+  BreakGlassAlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref BreakGlassAlertTopic]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: OwnerControlsTopic
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sns:*
+            Resource: !Ref BreakGlassAlertTopic
+          - Sid: EventBridgePublishesOnly
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BreakGlassAlertTopic
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt BreakGlassAssumeRule.Arn
+
+  BreakGlassAssumeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: plntir-breakglass-assume-role
+      Description: Alert on every attempt to assume PlntirBreakGlass.
+      State: ENABLED
+      EventPattern:
+        source: [aws.sts]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventSource: [sts.amazonaws.com]
+          eventName: [AssumeRole]
+          requestParameters:
+            roleArn: [!GetAtt BreakGlassRole.Arn]
+      Targets:
+        - Arn: !Ref BreakGlassAlertTopic
+          Id: sns-breakglass-alerts
+
+  BreakGlassEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref BreakGlassAlertTopic
+
+  BreakGlassSMSSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertPhone
+    Properties:
+      Protocol: sms
+      Endpoint: !Ref AlertPhoneE164
+      TopicArn: !Ref BreakGlassAlertTopic
+
+Outputs:
+  BuilderUserArn:
+    Value: !GetAtt BuilderUser.Arn
+  BootstrapRoleArn:
+    Value: !GetAtt BootstrapAdminRole.Arn
+  OwnerUserArn:
+    Value: !GetAtt OwnerUser.Arn
+  BreakGlassRoleArn:
+    Value: !GetAtt BreakGlassRole.Arn
+  ServiceRolePermissionsBoundaryArn:
+    Value: !Ref ServiceRolePermissionsBoundary
+  BreakGlassActivationState:
+    Value: disabled
+  BreakGlassAlertTopicArn:
+    Value: !Ref BreakGlassAlertTopic

@@ -1,9 +1,0 @@
-{
-  "source_commit": "2f272e5760608d08608dd5c9b929a0d1e7f5af9a",
-  "go": "1.26.8",
-  "python": "3.14.7",
-  "platform": "Fedora 44 x86_64, kernel 7.2.5-200.fc44",
-  "network": "Go proxy and checksum lookups disabled; synthetic local test data",
-  "source_changes": "Documentation only; code and build inputs unchanged",
-  "logs": "Local source/tool paths normalized; results unchanged"
-}

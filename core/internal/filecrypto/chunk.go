@@ -1,6 +1,7 @@
 package filecrypto
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -63,7 +64,7 @@ func New(key []byte, nonceSource io.Reader) (*FileCipher, error) {
 }
 
 func Restore(key []byte, prefix [NoncePrefixBytes]byte) (*FileCipher, error) {
-	return New(key, bytesReader(prefix[:]))
+	return New(key, bytes.NewReader(prefix[:]))
 }
 
 func (f *FileCipher) NoncePrefix() [NoncePrefixBytes]byte {
@@ -96,23 +97,4 @@ func (f *FileCipher) nonce(index uint64) [NonceBytes]byte {
 	copy(nonce[:NoncePrefixBytes], f.noncePrefix[:])
 	binary.BigEndian.PutUint64(nonce[NoncePrefixBytes:], index)
 	return nonce
-}
-
-type fixedReader struct {
-	data []byte
-	off  int
-}
-
-func bytesReader(data []byte) io.Reader {
-	copyOfData := append([]byte(nil), data...)
-	return &fixedReader{data: copyOfData}
-}
-
-func (r *fixedReader) Read(target []byte) (int, error) {
-	if r.off == len(r.data) {
-		return 0, io.EOF
-	}
-	n := copy(target, r.data[r.off:])
-	r.off += n
-	return n, nil
 }

@@ -199,7 +199,7 @@ old_brand_hits=$("${plntir_rg_bin}" -n -i \
     --glob '!install-plntir-control-node-migration.sh' \
     --glob '!generated/**' \
     'watchdog|mac-control-plane|mac control plane|macctl|macwatchdog|maccontrol' \
-    README.md Makefile client config control-node docs mac mdm scripts tests || true)
+    README.md Makefile client config control-node mac mdm scripts tests || true)
 if [[ -n ${old_brand_hits} ]]; then
     printf '%s\n' "${old_brand_hits}" >&2
     printf 'Legacy product branding remains outside the explicit status-v1 compatibility parser.\n' >&2

@@ -23,6 +23,35 @@ tags:
   - name: Shares
   - name: Administration
 paths:
+  /fileshare/status:
+    get:
+      tags: [Files]
+      operationId: getFileshareStatus
+      description: >-
+        Implemented read-only availability check. It requires a human Cloudflare
+        Access assertion and does not create or assert an application session.
+        Session and file routes remain unavailable in the current Shadow Core.
+      security:
+        - humanAccessAssertion: []
+      responses:
+        '200':
+          description: Fileshare is not connected in the current Shadow Core.
+          headers:
+            X-Plntir-Mode:
+              schema: { type: string, const: shadow }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [state, reason]
+                properties:
+                  state: { type: string, const: unavailable }
+                  reason: { type: string, const: shadow_mode }
+              examples:
+                shadow:
+                  externalValue: ./fixtures/fileshare-status-shadow.json
+        default: { $ref: '#/components/responses/Error' }
   /auth/invites/redeem:
     post:
       tags: [Authentication]
@@ -712,6 +741,11 @@ paths:
         default: { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
+    humanAccessAssertion:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: Verified Cloudflare Access JWT for a human principal; service authentication is rejected.
     sessionCookie:
       type: apiKey
       in: cookie

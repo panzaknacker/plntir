@@ -1,3 +1,0 @@
-Web dashboard Mac data checks passed.
-SKIP node JavaScript syntax check (not installed)
-Web dashboard checks passed.

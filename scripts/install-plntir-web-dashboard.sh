@@ -35,7 +35,6 @@ checksum_targets=(
     control-node/sudoers/91-plntir-web
     control-node/systemd/plntir-web.service
     config/nftables/nftables.conf
-    docs/plntir-web-dashboard.md
     scripts/install-plntir-web-dashboard.sh
     scripts/verify-plntir-web-dashboard.sh
 )
@@ -161,7 +160,6 @@ fi
 /usr/sbin/usermod -a -G "${CONTROL_GROUP}" "${WEB_USER}"
 /usr/bin/passwd -l "${WEB_USER}" >/dev/null
 
-/usr/bin/install -d -o root -g root -m 0755 /opt/plntir/share /opt/plntir/share/docs
 /usr/bin/install -d -o root -g "${WEB_GROUP}" -m 0750 /etc/plntir/web
 /usr/bin/install -d -o "${WEB_USER}" -g "${WEB_GROUP}" -m 0700 /var/lib/plntir-web
 if [[ -e ${AUDIT_FILE} || -L ${AUDIT_FILE} ]]; then
@@ -188,8 +186,6 @@ fi
     "${BUNDLE}/control-node/sudoers/91-plntir-web" /etc/sudoers.d/91-plntir-web
 /usr/bin/install -o root -g root -m 0644 \
     "${BUNDLE}/control-node/systemd/plntir-web.service" /etc/systemd/system/plntir-web.service
-/usr/bin/install -o root -g root -m 0644 \
-    "${BUNDLE}/docs/plntir-web-dashboard.md" /opt/plntir/share/docs/plntir-web-dashboard.md
 /usr/bin/install -o root -g root -m 0644 "${TLS_CERT}" /etc/plntir/web/tls.crt
 /usr/bin/install -o root -g root -m 0644 "${TLS_CA_CERT}" /etc/plntir/web/ca.crt
 /usr/bin/install -o root -g "${WEB_GROUP}" -m 0640 "${TLS_KEY}" /etc/plntir/web/tls.key

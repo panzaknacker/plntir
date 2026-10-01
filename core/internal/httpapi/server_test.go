@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +124,67 @@ func TestShadowModeFailsClosedForMutations(t *testing.T) {
 	}
 	if response.Header().Get("Content-Type") != "application/problem+json" {
 		t.Fatalf("problem content type = %q", response.Header().Get("Content-Type"))
+	}
+}
+
+func TestFileshareStatusMatchesFrontendContract(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "api", "fixtures", "fileshare-status-shadow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]string
+	if err := json.Unmarshal(fixture, &want); err != nil {
+		t.Fatal(err)
+	}
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "http://admin.plntir.example/api/v1/fileshare/status", nil)
+	request.Header.Set(access.AssertionHeader, "signed-access-token")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("X-Plntir-Mode") != "shadow" {
+		t.Fatalf("unexpected response %d: %s", response.Code, response.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Fileshare status = %v, frontend contract = %v", got, want)
+	}
+	for _, path := range []string{"/api/v1/session", "/api/v1/files"} {
+		request := httptest.NewRequest(http.MethodGet, "http://admin.plntir.example"+path, nil)
+		request.Header.Set(access.AssertionHeader, "signed-access-token")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("unimplemented %s returned %d", path, response.Code)
+		}
+	}
+}
+
+func TestFileshareStatusRequiresHumanAccessAndAllowedHost(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		host     string
+		token    string
+		verifier fakeAccess
+		want     int
+	}{
+		{name: "missing assertion", host: "admin.plntir.example", want: http.StatusUnauthorized},
+		{name: "invalid assertion", host: "admin.plntir.example", token: "invalid", verifier: fakeAccess{err: errors.New("invalid")}, want: http.StatusUnauthorized},
+		{name: "service principal", host: "admin.plntir.example", token: "service", verifier: fakeAccess{principal: access.Principal{ServiceAuth: true}}, want: http.StatusUnauthorized},
+		{name: "untrusted host", host: "evil.invalid", token: "signed-access-token", want: http.StatusMisdirectedRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := testServer(t)
+			server.access = test.verifier
+			request := httptest.NewRequest(http.MethodGet, "http://"+test.host+"/api/v1/fileshare/status", nil)
+			request.Header.Set(access.AssertionHeader, test.token)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
 	}
 }

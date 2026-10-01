@@ -30,8 +30,7 @@ readonly GO_BINARY
     "${OUTPUT}/control-node/sudoers" \
     "${OUTPUT}/control-node/systemd" \
     "${OUTPUT}/config/nftables" \
-    "${OUTPUT}/scripts" \
-    "${OUTPUT}/docs"
+    "${OUTPUT}/scripts"
 
 (cd "${ROOT}/client" &&
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "${GO_BINARY}" build \
@@ -59,9 +58,6 @@ readonly GO_BINARY
 /usr/bin/install -m 0644 \
     "${ROOT}/config/nftables/nftables.conf" \
     "${OUTPUT}/config/nftables/"
-/usr/bin/install -m 0644 \
-    "${ROOT}/docs/plntir-web-dashboard.md" \
-    "${OUTPUT}/docs/"
 
 (
     cd "${OUTPUT}"
@@ -76,7 +72,6 @@ readonly GO_BINARY
         scripts/install-plntir-web-dashboard.sh \
         scripts/verify-plntir-web-dashboard.sh \
         config/nftables/nftables.conf \
-        docs/plntir-web-dashboard.md \
         >SHA256SUMS
 )
 /bin/chmod 0644 "${OUTPUT}/SHA256SUMS"

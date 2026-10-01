@@ -11,7 +11,7 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$repo_root"
 for required_tool in go mktemp sha256sum tee grep; do
     if ! command -v "$required_tool" >/dev/null 2>&1; then
-        printf 'Missing local tool: %s. See docs/DEMO.md.\n' "$required_tool" >&2
+        printf 'Missing local tool: %s. See README.md.\n' "$required_tool" >&2
         exit 1
     fi
 done
@@ -39,7 +39,7 @@ printf 'Running: archive creation, exact restore, then ciphertext tamper rejecti
 
 cd -- mac/archive-agent
 if ! go test -count=1 -v ./archive -run '^TestFullFileRestoreUsesOnlyOfflinePrivateKey$' 2>&1 | tee "$demo_tmp/test.log"; then
-    printf '\nExample failed. Check the compiler/test error above and docs/DEMO.md.\n' >&2
+    printf '\nExample failed. Check the compiler/test error above and README.md.\n' >&2
     exit 1
 fi
 if ! grep -q '^--- PASS: TestFullFileRestoreUsesOnlyOfflinePrivateKey ' "$demo_tmp/test.log"; then

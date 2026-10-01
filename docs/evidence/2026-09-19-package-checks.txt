@@ -1,2 +1,0 @@
-plntir-platform-update.tar.gz: OK
-Package build checks passed.

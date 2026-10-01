@@ -1,6 +1,5 @@
 [Unit]
 Description=Plntir private Mesh operations console
-Documentation=file:/opt/plntir/share/docs/plntir-web-dashboard.md
 After=network-online.target warp-svc.service
 Wants=network-online.target
 

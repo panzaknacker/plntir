@@ -1,12 +1,12 @@
 # Gehostete CI
 
-## Prüfversuch vom 01.10.2026
+## Prüfversuch vom 01.10.2026 im privaten Ausgangsrepository
 
 GitHub Actions waren vor der Durchsicht deaktiviert. Die vorhandenen Prüf- und
 Secret-Scan-Workflows wurden kurz aktiviert und manuell gestartet:
 
-- [Prüflauf](https://github.com/panzaknacker/plntir/actions/runs/36853178219)
-- [Secret-Scan](https://github.com/panzaknacker/plntir/actions/runs/36853190178)
+- Prüfworkflow: privater Lauf `36853178219`.
+- Secret-Scan: privater Lauf `36853190178`.
 
 Beide endeten mit `startup_failure`, bevor ein Job angelegt wurde. Jobs-API und
 Check-Run-Liste blieben leer; Runner-Logs oder Fehleranmerkungen waren nicht
@@ -18,7 +18,9 @@ Checkout-Aktion existiert. Diese Prüfungen diagnostizieren den Startfehler nich
 
 Actions wurden auf den ursprünglichen deaktivierten Zustand zurückgestellt,
 um weitere Fehlmeldungen bei Dokumentationsänderungen zu vermeiden. Die
-fehlgeschlagenen Läufe bleiben sichtbar. Nach Klärung der Ursache die Workflows
-gezielt aktivieren und beobachten. Lokale Ergebnisse sind getrennt dokumentiert.
+fehlgeschlagenen Läufe bleiben im privaten Archiv erhalten. Das neu aufgebaute
+öffentliche Repository hat eine eigene anonyme Historie; Actions bleiben dort
+ebenfalls deaktiviert. Nach Klärung der Ursache die Workflows gezielt aktivieren
+und beobachten. Lokale Ergebnisse sind getrennt dokumentiert.
 
 [Projektstatus](../PROJECT_STATUS.md)

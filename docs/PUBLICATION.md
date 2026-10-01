@@ -1,6 +1,6 @@
 # Quellstand und Veröffentlichung
 
-Der vorbereitete Quell-Export verwendet neutrale Betreiberbeispiele.
+Dieser Quellstand verwendet neutrale Betreiberbeispiele.
 Produktive Einstellungen bleiben außerhalb des Repositorys. Die Archivdemo
 lädt diese Einstellungen nicht.
 
@@ -21,10 +21,14 @@ Go-Code, Signatur- und Archivfunktionen wurden dabei nicht geändert.
 
 ## Historie und Herkunft
 
-Ältere private Commits enthalten noch persönliche Benutzerpfade. Der geplante
-öffentliche Stand wird deshalb aus diesem geprüften Export mit neuer anonymer
-Historie aufgebaut. Die bisherigen privaten Entwürfe und ihre Historie bleiben
-separat privat erhalten. Eine Veröffentlichung der alten Historie ist nicht vorgesehen.
+Ältere private Commits enthalten noch persönliche Benutzerpfade. Dieser Stand
+wurde deshalb aus dem geprüften Export mit neuer anonymer Historie aufgebaut.
+Die bisherigen Entwürfe und ihre Historie bleiben im separaten privaten Archiv
+erhalten. Die öffentliche Historie enthält diese älteren Commits nicht.
+
+Quell-Commit-IDs in älteren Prüfprotokollen beziehen sich auf den privaten
+Ausgangsstand. Die Dateien des anonymen Exports entsprechen dem gemergten
+Quellstand; die beigefügten SHA-256-Manifeste dokumentieren die geprüften Eingaben.
 
 Die ursprüngliche vollständige Entwicklungshistorie wurde nicht mitgeliefert.
 Die private Installation verwendet eine andere oder neuere Variante; ihr genaues

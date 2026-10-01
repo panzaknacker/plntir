@@ -2,27 +2,6 @@
   max-inline-size: 72rem;
 }
 
-.file-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-block-size: 2.5rem;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-1);
-  cursor: pointer;
-}
-
-.file-action input {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  clip-path: inset(50%);
-}
-.file-action-disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
 .file-toolbar {
   justify-content: space-between;
   margin-block-end: var(--space-3);
@@ -67,9 +46,6 @@
 }
 
 @media (max-width: 42rem) {
-  .file-action {
-    inline-size: 100%;
-  }
   .file-row {
     grid-template-columns: 1fr;
     align-items: start;

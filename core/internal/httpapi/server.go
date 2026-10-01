@@ -83,6 +83,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health/live", s.handleLive)
 	s.mux.HandleFunc("GET /health/ready", s.handleReady)
 	s.mux.Handle("GET /api/v1/admin/health", s.requireHumanAccess(http.HandlerFunc(s.handleAdminHealth)))
+	s.mux.Handle("GET /api/v1/fileshare/status", s.requireHumanAccess(http.HandlerFunc(s.handleFileshareStatus)))
 	s.mux.Handle("/api/v1/", s.requireHumanAccess(http.HandlerFunc(s.handleShadowAPI)))
 }
 
@@ -163,6 +164,12 @@ func (s *Server) handleAdminHealth(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	s.writeJSON(writer, http.StatusOK, projection)
+}
+
+func (s *Server) handleFileshareStatus(writer http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(writer, http.StatusOK, map[string]string{
+		"state": "unavailable", "reason": "shadow_mode",
+	})
 }
 
 func (s *Server) handleShadowAPI(writer http.ResponseWriter, request *http.Request) {

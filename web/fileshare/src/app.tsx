@@ -1,25 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
-import { fetchJSON, HTTPProblem } from "../../shared/http";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { asRecord, fetchJSON, HTTPProblem } from "../../shared/http";
 import { formatBytes, formatTime } from "../../shared/format";
-import { type FilesPage, type Session, type SharedFile, parseFiles, parseSession } from "./model";
+import { type FilesPage, type Session, type SharedFile } from "./model";
 
-export interface LoadedFileshare {
-  session: Session;
-  page: FilesPage;
-  apiMode: string;
-}
+export type LoadedFileshare =
+  | { state: "unavailable"; apiMode: "shadow" }
+  | { state: "ready"; session: Session; page: FilesPage; apiMode: "shadow" | "active" };
 export type FileshareLoader = (signal?: AbortSignal) => Promise<LoadedFileshare>;
 
 export async function loadFileshare(signal?: AbortSignal): Promise<LoadedFileshare> {
-  const [sessionResult, filesResult] = await Promise.all([
-    fetchJSON("/api/v1/session", signal),
-    fetchJSON("/api/v1/files", signal),
-  ]);
-  return {
-    session: parseSession(sessionResult.value),
-    page: parseFiles(filesResult.value),
-    apiMode: sessionResult.mode === filesResult.mode ? sessionResult.mode : "unknown",
-  };
+  const result = await fetchJSON("/api/v1/fileshare/status", signal);
+  const status = asRecord(result.value);
+  if (result.mode !== "shadow" || status.state !== "unavailable" || status.reason !== "shadow_mode") {
+    throw new Error("Unbekannter Fileshare-Status.");
+  }
+  return { state: "unavailable", apiMode: "shadow" };
 }
 
 interface AppProps {
@@ -31,53 +26,41 @@ export function App({ loader = loadFileshare }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState("");
-  const [selectionNote, setSelectionNote] = useState<string | null>(null);
+  const request = useRef<AbortController | null>(null);
 
   const refresh = useCallback(
-    async (signal?: AbortSignal) => {
+    async () => {
+      request.current?.abort();
+      const controller = new AbortController();
+      request.current = controller;
       setRefreshing(true);
+      setData(null);
       setError(null);
       try {
-        setData(await loader(signal));
+        const result = await loader(controller.signal);
+        if (!controller.signal.aborted) setData(result);
       } catch (reason) {
-        if (!signal?.aborted) setError(friendlyError(reason));
+        if (!controller.signal.aborted) setError(friendlyError(reason));
       } finally {
-        if (!signal?.aborted) setRefreshing(false);
+        if (!controller.signal.aborted) setRefreshing(false);
       }
     },
     [loader],
   );
 
   useEffect(() => {
-    const controller = new AbortController();
-    void refresh(controller.signal);
-    return () => controller.abort();
+    void refresh();
+    return () => request.current?.abort();
   }, [refresh]);
 
-  const active = data?.apiMode === "active";
+  const files = data?.state === "ready" ? data : null;
   const visibleFiles = useMemo(() => {
     const needle = filter.trim().toLocaleLowerCase("de-DE");
     return (
-      data?.page.items.filter((file) => needle === "" || file.filename.toLocaleLowerCase("de-DE").includes(needle)) ??
+      files?.page.items.filter((file) => needle === "" || file.filename.toLocaleLowerCase("de-DE").includes(needle)) ??
       []
     );
-  }, [data, filter]);
-
-  const chooseFile = (event: Event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.item(0);
-    input.value = "";
-    if (!file) return;
-    if (file.size > 500_000_000_000) setSelectionNote("Diese Datei überschreitet das absolute Limit von 500 GB.");
-    else if (file.size > 5_000_000_000)
-      setSelectionNote(
-        "Dateien über 5 GB werden in v1 ausschließlich mit dem macOS-Transfer-Agenten verschlüsselt übertragen.",
-      );
-    else
-      setSelectionNote(
-        `${file.name} (${formatBytes(file.size)}) wurde ausgewählt. Der Browser-Upload ist noch nicht freigegeben.`,
-      );
-  };
+  }, [files, filter]);
 
   return (
     <div class="app-shell">
@@ -89,8 +72,8 @@ export function App({ loader = loadFileshare }: AppProps) {
           <strong>Plntir</strong>
           <span>Fileshare</span>
         </div>
-        <span class={`status ${active ? "status-ok" : "status-warning"}`}>
-          {active ? "Aktiv" : "Shadow · nur lesen"}
+        <span class="status status-warning">
+          {data?.state === "unavailable" ? "Nicht verfügbar" : files ? "Nur lesen" : "Status unbekannt"}
         </span>
       </header>
       <main class="page files-page" id="main">
@@ -99,27 +82,14 @@ export function App({ loader = loadFileshare }: AppProps) {
             <h1>Meine Dateien</h1>
             <p class="lede">Verschlüsselte Dateien auf deinen registrierten Geräten – ohne öffentliches Verzeichnis.</p>
           </div>
-          <label class={`file-action primary-action ${!active ? "file-action-disabled" : ""}`}>
-            Datei auswählen
-            <input type="file" disabled={!active} onChange={chooseFile} aria-describedby="upload-help" />
-          </label>
         </div>
 
-        {!active && (
+        {data?.state === "unavailable" && (
           <div class="notice" role="status">
             <p>
-              <strong>Fileshare ist noch nicht aktiv.</strong> Session, Upload und Download bleiben im Shadow-Aufbau
-              gesperrt. Der laufende Dienst wird nicht verändert.
+              <strong>Fileshare ist noch nicht verfügbar.</strong> Die Dateiliste und Dateiübertragung sind noch
+              nicht angebunden.
             </p>
-          </div>
-        )}
-        <p class="field-help" id="upload-help">
-          Im Browser höchstens 5 GB. Größere Bilder und Videos bis 500 GB laufen ausschließlich über den
-          macOS-Transfer-Agenten; Hotspots werden abgelehnt.
-        </p>
-        {selectionNote && (
-          <div class="notice" role="status">
-            <p>{selectionNote}</p>
           </div>
         )}
         {error && (
@@ -127,7 +97,6 @@ export function App({ loader = loadFileshare }: AppProps) {
             <p>
               <strong>Fileshare konnte nicht geladen werden.</strong> {error}
             </p>
-            {data && <p>Die zuletzt geladene Liste bleibt sichtbar.</p>}
           </div>
         )}
 
@@ -135,17 +104,24 @@ export function App({ loader = loadFileshare }: AppProps) {
           <div class="section-heading">
             <div>
               <h2 id="files-title">Dateiliste</h2>
-              {data && <span class="meta">Sitzung bis {formatTime(data.session.idleExpiresAt)}</span>}
+              {files && <span class="meta">Sitzung bis {formatTime(files.session.idleExpiresAt)}</span>}
             </div>
             <button type="button" disabled={refreshing} onClick={() => void refresh()}>
               {refreshing ? "Lädt …" : "Aktualisieren"}
             </button>
           </div>
-          {!data ? (
+          {!files ? (
             refreshing ? (
               <Loading />
             ) : (
-              <Empty title="Noch keine Dateiliste" detail="Die geschützte Fileshare-API ist noch nicht erreichbar." />
+              <Empty
+                title="Keine Dateiliste verfügbar"
+                detail={
+                  data?.state === "unavailable"
+                    ? "Der Dienst bietet noch keinen Dateizugriff an."
+                    : "Der Dateizugriff konnte nicht geprüft werden."
+                }
+              />
             )
           ) : (
             <>
@@ -161,22 +137,22 @@ export function App({ loader = loadFileshare }: AppProps) {
                   />
                 </div>
                 <span class="meta">
-                  {visibleFiles.length} von {data.page.items.length}
+                  {visibleFiles.length} von {files.page.items.length}
                 </span>
               </div>
               {visibleFiles.length === 0 ? (
                 <Empty
-                  title={data.page.items.length === 0 ? "Noch keine Dateien" : "Keine Treffer"}
+                  title={files.page.items.length === 0 ? "Noch keine Dateien" : "Keine Treffer"}
                   detail={
-                    data.page.items.length === 0
+                    files.page.items.length === 0
                       ? "Nach Freigabe des aktiven Modus erscheinen eigene und empfangene Dateien hier."
                       : "Ändere den Filter, um andere Dateien zu sehen."
                   }
                 />
               ) : (
-                <FileList files={visibleFiles} accountId={data.session.accountId} active={active} />
+                <FileList files={visibleFiles} accountId={files.session.accountId} />
               )}
-              {data.page.nextCursor && (
+              {files.page.nextCursor && (
                 <p class="notice-inline">
                   Weitere Ergebnisse sind vorhanden. Pagination wird vor dem aktiven Cutover angeschlossen.
                 </p>
@@ -189,11 +165,10 @@ export function App({ loader = loadFileshare }: AppProps) {
   );
 }
 
-function FileList({ files, accountId, active }: { files: SharedFile[]; accountId: string; active: boolean }) {
+function FileList({ files, accountId }: { files: SharedFile[]; accountId: string }) {
   return (
     <ul class="file-list">
       {files.map((file) => {
-        const downloadable = active && file.state === "active" && file.scanState === "clean";
         return (
           <li key={file.id} class="file-row">
             <div class="file-main">
@@ -211,8 +186,8 @@ function FileList({ files, accountId, active }: { files: SharedFile[]; accountId
             </div>
             <button
               type="button"
-              disabled={!downloadable}
-              title={downloadable ? "Download-Ticket anfordern" : downloadReason(file, active)}
+              disabled
+              title="Downloads sind noch nicht angebunden"
             >
               Herunterladen
             </button>
@@ -270,18 +245,9 @@ function stateLabel(state: SharedFile["state"]): string {
   }[state];
 }
 
-function downloadReason(file: SharedFile, active: boolean): string {
-  if (!active) return "Im Shadow-Modus gesperrt";
-  if (file.state !== "active") return "Datei ist nicht aktiv";
-  if (file.scanState !== "clean") return "Download bleibt bis zu einem sauberen Scan gesperrt";
-  return "Download gesperrt";
-}
-
 function friendlyError(reason: unknown): string {
-  if (reason instanceof HTTPProblem && reason.status === 404)
-    return "Die Session- und Dateirouten sind im Shadow-Modus absichtlich noch nicht verfügbar.";
   if (reason instanceof HTTPProblem && reason.status === 401)
-    return "Cloudflare-Access-Anmeldung oder registriertes WARP-Gerät fehlt.";
+    return "Die Cloudflare-Access-Anmeldung fehlt oder ist ungültig.";
   if (reason instanceof HTTPProblem) return reason.message;
   return "Die Antwort war nicht vertragskonform oder die Verbindung ist unterbrochen.";
 }

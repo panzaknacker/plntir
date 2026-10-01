@@ -1,0 +1,316 @@
+---
+- name: Validate baseline variables
+  ansible.builtin.assert:
+    that:
+      - plntir_admin_user == 'plntir-admin'
+      - plntir_node_role in ['core', 'mdm', 'edge', 'relay', 'siem']
+      - plntir_release_id is match('^sha256:[0-9a-f]{64}$')
+      - plntir_ssh_ca_public_key == '' or plntir_ssh_ca_public_key is match('^ssh-ed25519 [A-Za-z0-9+/]+={0,3}( [^\r\n]+)?$')
+      - plntir_bootstrap_access_retained or plntir_ssh_ca_public_key != ''
+    fail_msg: SSH bootstrap removal requires a reviewed Ed25519 user CA public key.
+
+- name: Validate host-input firewall rules
+  ansible.builtin.include_tasks: validate_rule.yml
+  loop: "{{ plntir_input_tcp_rules }}"
+  loop_control:
+    loop_var: plntir_rule
+    label: "{{ plntir_rule.name }}"
+
+- name: Validate Docker-published firewall rules
+  ansible.builtin.include_tasks: validate_rule.yml
+  loop: "{{ plntir_docker_tcp_rules }}"
+  loop_control:
+    loop_var: plntir_rule
+    label: "{{ plntir_rule.name }}"
+
+- name: Validate the node output policy
+  ansible.builtin.assert:
+    that:
+      - plntir_output_policy in ['accept', 'drop']
+      - plntir_node_role == 'siem' or plntir_output_policy == 'accept'
+      - plntir_node_role != 'siem' or plntir_output_policy == 'drop'
+    fail_msg: Only the isolated SIEM node uses a default-drop output policy in v1.
+
+- name: Validate exact TCP egress rules
+  ansible.builtin.include_tasks: validate_output_rule.yml
+  loop: "{{ plntir_output_tcp_rules }}"
+  loop_control:
+    loop_var: plntir_rule
+    label: "{{ plntir_rule.name }}"
+
+- name: Validate exact UDP egress rules
+  ansible.builtin.include_tasks: validate_output_rule.yml
+  loop: "{{ plntir_output_udp_rules }}"
+  loop_control:
+    loop_var: plntir_rule
+    label: "{{ plntir_rule.name }}"
+
+- name: Validate the declared Docker network boundary
+  ansible.builtin.assert:
+    that:
+      - plntir_docker_internal_interfaces | length > 0
+      - plntir_docker_egress_interfaces | length > 0
+      - plntir_external_interfaces | length > 0
+      - >-
+        (plntir_docker_internal_interfaces |
+        intersect(plntir_docker_egress_interfaces) | length) == 0
+      - >-
+        ((plntir_docker_internal_interfaces + plntir_docker_egress_interfaces) |
+        unique | length) ==
+        ((plntir_docker_internal_interfaces + plntir_docker_egress_interfaces) |
+        length)
+    fail_msg: Docker nodes require distinct, explicitly named internal, egress, and physical interfaces.
+  when: plntir_enable_docker
+
+- name: Validate exact Docker and physical interface names
+  ansible.builtin.assert:
+    that:
+      - item is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$')
+      - item != 'lo'
+      - "'REPLACE' not in item"
+      - "'*' not in item"
+    fail_msg: Firewall interfaces must be concrete Linux interface names of at most 15 characters.
+  loop: >-
+    {{
+      plntir_docker_internal_interfaces +
+      plntir_docker_egress_interfaces +
+      plntir_external_interfaces
+    }}
+  when: plntir_enable_docker
+
+- name: Install the bounded baseline package set
+  ansible.builtin.apt:
+    name: >-
+      {{
+        [
+          'apparmor',
+          'auditd',
+          'ca-certificates',
+          'chrony',
+          'curl',
+          'jq',
+          'nftables',
+          'openssh-server',
+          'unattended-upgrades'
+        ] + plntir_extra_packages
+      }}
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    install_recommends: false
+
+- name: Create protected Plntir directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/plntir, mode: "0700"}
+    - {path: /etc/ssh/auth_principals, mode: "0755"}
+    - {path: /etc/nftables.d, mode: "0755"}
+    - {path: /etc/systemd/journald.conf.d, mode: "0755"}
+    - {path: /etc/systemd/coredump.conf.d, mode: "0755"}
+
+- name: Create the unprivileged administration identity
+  ansible.builtin.user:
+    name: "{{ plntir_admin_user }}"
+    comment: Plntir short-lived certificate administrator
+    create_home: true
+    shell: /bin/bash
+    password_lock: true
+    system: false
+
+- name: Record the immutable node and release binding
+  ansible.builtin.copy:
+    dest: /etc/plntir/node-identity
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      schema_version=1
+      hostname={{ inventory_hostname }}
+      role={{ plntir_node_role }}
+      aws_resource_arn={{ plntir_aws_resource_arn }}
+      release={{ plntir_release_id }}
+
+- name: Install kernel and network hardening
+  ansible.builtin.template:
+    src: 90-plntir-sysctl.conf.j2
+    dest: /etc/sysctl.d/90-plntir.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply Plntir sysctl
+
+- name: Disable persistent core dumps
+  ansible.builtin.template:
+    src: coredump.conf.j2
+    dest: /etc/systemd/coredump.conf.d/90-plntir.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Set hard core-size limits
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/90-plntir.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      * hard core 0
+      root hard core 0
+
+- name: Configure persistent bounded journald storage
+  ansible.builtin.template:
+    src: journald.conf.j2
+    dest: /etc/systemd/journald.conf.d/90-plntir.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald
+
+- name: Configure unattended security updates without reboot
+  ansible.builtin.template:
+    src: 52plntir-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52plntir-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the unattended-upgrade timer
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Install the SSH user CA public key
+  ansible.builtin.copy:
+    dest: /etc/ssh/plntir_user_ca.pub
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ plntir_ssh_ca_public_key }}\n"
+  when: plntir_ssh_ca_public_key != ''
+  notify: Reload ssh
+
+- name: Install the certificate principal allowlist
+  ansible.builtin.copy:
+    dest: "/etc/ssh/auth_principals/{{ plntir_admin_user }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ plntir_admin_user }}\n"
+
+- name: Install restrictive SSH daemon policy
+  ansible.builtin.template:
+    src: 90-plntir-sshd.conf.j2
+    dest: /etc/ssh/sshd_config.d/90-plntir.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload ssh
+
+- name: Install audit rules
+  ansible.builtin.template:
+    src: 90-plntir-audit.rules.j2
+    dest: /etc/audit/rules.d/90-plntir.rules
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reload audit rules
+
+- name: Install exact-source nftables policy
+  ansible.builtin.template:
+    src: plntir-filter.nft.j2
+    dest: /etc/nftables.d/90-plntir-filter.nft
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload Plntir firewall
+
+- name: Install a non-destructive nftables include root
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload Plntir firewall
+
+- name: Install bounded Docker daemon policy
+  ansible.builtin.template:
+    src: docker-daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0600"
+  when: plntir_enable_docker
+  notify: Restart docker
+
+- name: Enable baseline enforcement services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apparmor
+    - auditd
+    - chrony
+    - nftables
+    - ssh
+
+- name: Enable Docker only on declared container nodes
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+  when: plntir_enable_docker
+
+- name: Disable unneeded discovery and print services when present
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+    masked: true
+  loop:
+    - avahi-daemon.service
+    - avahi-daemon.socket
+    - cups.service
+    - cups.socket
+    - rpcbind.service
+    - rpcbind.socket
+  failed_when: false
+
+- name: Apply and reload hardening before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the Plntir firewall table is active
+  ansible.builtin.command: /usr/sbin/nft list table inet plntir_filter
+  changed_when: false
+
+- name: Verify SSH has no root, password, or forwarding path
+  ansible.builtin.shell: |
+    set -o pipefail
+    /usr/sbin/sshd -T | /usr/bin/grep -E \
+      '^(permitrootlogin no|passwordauthentication no|kbdinteractiveauthentication no|disableforwarding yes)$'
+  args:
+    executable: /bin/bash
+  register: plntir_sshd_effective
+  changed_when: false
+  failed_when: plntir_sshd_effective.stdout_lines | length != 4
+
+- name: Verify IPv6 remains enabled
+  ansible.builtin.command: /usr/sbin/sysctl -n net.ipv6.conf.all.disable_ipv6
+  register: plntir_ipv6_disabled
+  changed_when: false
+  failed_when: plntir_ipv6_disabled.stdout != '0'

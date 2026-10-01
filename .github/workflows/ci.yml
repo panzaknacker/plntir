@@ -1,0 +1,44 @@
+name: Local verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local:
+    name: Core, client, archive and contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOFLAGS: -mod=readonly
+      PYTHONDONTWRITEBYTECODE: "1"
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            mac/archive-agent/go.sum
+      - name: Install local validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends jq ripgrep python3-yaml openssh-client age curl
+      - name: Test local contracts and package boundaries
+        run: make check
+      - name: Validate Fleet ingress and inactive archive library
+        run: make mdm-check archive-check
+      - name: Test Go concurrency
+        run: make test-race
+
+# the full platform-check also needs node, terraform and ansible dependencies.
+# this workflow verifies only the named local components; it deploys nothing.

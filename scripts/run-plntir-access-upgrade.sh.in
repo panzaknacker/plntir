@@ -1,0 +1,58 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+if [[ ${EUID} -ne 0 ]]; then
+    printf 'Run with sudo from an authenticated Plntir administrator session.\n' >&2
+    exit 1
+fi
+
+readonly SHARE_DIR=/Users/Shared/.plntir/inbox/access-upgrade
+readonly ARCHIVE=${SHARE_DIR}/plntir-access-upgrade.tar.gz
+readonly EXPECTED_CHECKSUM=@CHECKSUM@
+readonly EXPECTED_OWNER=@OWNER@
+
+if [[ -L ${SHARE_DIR} || ! -d ${SHARE_DIR} ]]; then
+    printf 'Unsafe or missing access-upgrade directory.\n' >&2
+    exit 66
+fi
+if [[ $(/usr/bin/stat -f %Su "${SHARE_DIR}") != "${EXPECTED_OWNER}" ]]; then
+    printf 'Unexpected access-upgrade directory owner.\n' >&2
+    exit 77
+fi
+unsafe_path=$(/usr/bin/find "${SHARE_DIR}" -maxdepth 1 \( -perm -020 -o -perm -002 \) -print -quit)
+if [[ -n ${unsafe_path} ]]; then
+    printf 'Access-upgrade directory contains a group/other-writable path: %s\n' "${unsafe_path}" >&2
+    exit 77
+fi
+if [[ ! -f ${ARCHIVE} || -L ${ARCHIVE} ]]; then
+    printf 'Unsafe or missing access-upgrade archive.\n' >&2
+    exit 66
+fi
+
+stage=$(/usr/bin/mktemp -d /private/var/tmp/plntir-access-upgrade.XXXXXX)
+cleanup() {
+    case ${stage} in
+    /private/var/tmp/plntir-access-upgrade.*)
+        /bin/rm -rf "${stage}"
+        ;;
+    *)
+        printf 'Refusing unsafe temporary cleanup path.\n' >&2
+        ;;
+    esac
+}
+trap cleanup EXIT
+
+/bin/cp "${ARCHIVE}" "${stage}/access-upgrade.tar.gz"
+actual_checksum=$(/usr/bin/shasum -a 256 "${stage}/access-upgrade.tar.gz" | /usr/bin/awk '{print $1}')
+if [[ ${actual_checksum} != "${EXPECTED_CHECKSUM}" ]]; then
+    printf 'Checksum mismatch; access upgrade was not executed.\n' >&2
+    exit 65
+fi
+/usr/bin/tar -xzf "${stage}/access-upgrade.tar.gz" -C "${stage}"
+if [[ ! -d ${stage}/plntir-access-upgrade || -L ${stage}/plntir-access-upgrade ]]; then
+    printf 'Archive layout is invalid.\n' >&2
+    exit 65
+fi
+/usr/sbin/chown -R root:wheel "${stage}/plntir-access-upgrade"
+/bin/chmod -R go-w "${stage}/plntir-access-upgrade"
+"${stage}/plntir-access-upgrade/install.sh"

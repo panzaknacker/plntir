@@ -1,0 +1,6 @@
+---
+plntir_node_role: relay
+plntir_expected_architecture: aarch64
+plntir_journal_max_use: 32M
+plntir_journal_keep_free: 64M
+plntir_input_tcp_rules: []

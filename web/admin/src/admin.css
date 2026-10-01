@@ -1,0 +1,14 @@
+.summary-text {
+  font-size: 1rem !important;
+}
+
+.section td:last-child {
+  max-inline-size: 28rem;
+}
+
+@media (max-width: 42rem) {
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

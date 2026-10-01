@@ -1,0 +1,5 @@
+title = "Plntir secret-scanning policy"
+minVersion = "v8.25.0"
+
+[extend]
+useDefault = true

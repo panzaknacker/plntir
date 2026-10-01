@@ -1,0 +1,19 @@
+## Managed by Plntir. Wazuh consumes these records on supported nodes.
+-b 8192
+-f 1
+--backlog_wait_time 60000
+-w /etc/plntir/ -p wa -k plntir_config
+-w /etc/nftables.conf -p wa -k plntir_firewall
+-w /etc/nftables.d/ -p wa -k plntir_firewall
+-w /etc/ssh/sshd_config -p wa -k plntir_ssh
+-w /etc/ssh/sshd_config.d/ -p wa -k plntir_ssh
+-w /etc/ssh/auth_principals/ -p wa -k plntir_ssh
+-w /etc/sudoers -p wa -k plntir_privilege
+-w /etc/sudoers.d/ -p wa -k plntir_privilege
+{% if plntir_enable_docker %}
+-w /var/run/docker.sock -p rwxa -k plntir_docker
+{% endif %}
+-a always,exit -F arch=b64 -S execve -F euid=0 -k plntir_root_exec
+{% if ansible_architecture == 'x86_64' %}
+-a always,exit -F arch=b32 -S execve -F euid=0 -k plntir_root_exec
+{% endif %}

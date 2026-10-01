@@ -1,0 +1,15 @@
+#!/bin/sh
+set -u
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/libexec
+export PATH LC_ALL=C
+
+printf 'time='
+date -u +%Y-%m-%dT%H:%M:%SZ
+printf 'mdm='
+profiles status -type enrollment 2>&1 | tr '\n' ';'
+printf '\n'
+printf 'remote_login='
+systemsetup -getremotelogin 2>&1
+printf 'firewall='
+/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1

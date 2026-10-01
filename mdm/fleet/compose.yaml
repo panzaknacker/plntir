@@ -1,0 +1,180 @@
+name: plntir-device-management
+
+x-fleet-environment: &fleet-environment
+  FLEET_MYSQL_ADDRESS: mysql:3306
+  FLEET_MYSQL_DATABASE: fleet
+  FLEET_MYSQL_USERNAME: fleet
+  FLEET_MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+  FLEET_REDIS_ADDRESS: redis:6379
+  FLEET_SERVER_ADDRESS: 0.0.0.0:8080
+  FLEET_SERVER_TLS: "false"
+  FLEET_SERVER_URL: https://${FLEET_HOSTNAME:?set FLEET_HOSTNAME}
+  FLEET_SERVER_PRIVATE_KEY: ${FLEET_SERVER_PRIVATE_KEY:?set FLEET_SERVER_PRIVATE_KEY}
+  FLEET_LOGGING_JSON: "true"
+  FLEET_MDM_APPLE_SCEP_VERIFY_DISABLE: "false"
+  FLEET_VULNERABILITIES_DATABASES_PATH: /var/lib/fleet/vulnerabilities
+
+services:
+  mysql:
+    image: mysql:8.4.8@sha256:4fc4bca5a26c5aa2246a92779d238bc2d34f0373e65dc083d7b635b02780dd3d
+    platform: linux/amd64
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --max_allowed_packet=536870912
+      - --enforce-gtid-consistency=ON
+      - --log-bin=bin.log
+      - --server-id=1
+      - --binlog-expire-logs-seconds=604800
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: fleet
+      MYSQL_USER: fleet
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+    volumes:
+      - fleet-mysql:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    mem_reservation: 512m
+    pids_limit: 256
+
+  redis:
+    image: redis:7.4-alpine@sha256:1db42ccef14898aa29bae778452d567534b59c107129cbc1163fb552de184d3c
+    platform: linux/amd64
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - fleet-redis:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    mem_reservation: 64m
+    pids_limit: 96
+
+  prepare:
+    image: fleetdm/fleet:v4.89.2@sha256:862604e5d2ae67bc7a2476645e11a0af0b153f4be496dcf69ca0dbc1cd56a71a
+    platform: linux/amd64
+    command: ["/usr/bin/fleet", "prepare", "db", "--no-prompt=true"]
+    environment: *fleet-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 192
+
+  fleet-init:
+    image: alpine:3.22@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6
+    platform: linux/amd64
+    command: ["sh", "-c", "chown -R 100:101 /fleet /logs /var/lib/fleet/vulnerabilities"]
+    network_mode: none
+    volumes:
+      - fleet-data:/fleet
+      - fleet-logs:/logs
+      - fleet-vulnerabilities:/var/lib/fleet/vulnerabilities
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 32m
+    pids_limit: 32
+
+  fleet:
+    image: fleetdm/fleet:v4.89.2@sha256:862604e5d2ae67bc7a2476645e11a0af0b153f4be496dcf69ca0dbc1cd56a71a
+    platform: linux/amd64
+    command: ["/usr/bin/fleet", "serve"]
+    restart: unless-stopped
+    environment: *fleet-environment
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+      fleet-init:
+        condition: service_completed_successfully
+    ports:
+      - "${FLEET_ADMIN_BIND_ADDRESS:?set FLEET_ADMIN_BIND_ADDRESS}:1337:8080"
+    volumes:
+      - fleet-data:/fleet
+      - fleet-logs:/logs
+      - fleet-vulnerabilities:/var/lib/fleet/vulnerabilities
+    networks:
+      - backend
+      - edge
+      - device
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 640m
+    mem_reservation: 384m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  ingress:
+    build:
+      context: .
+      dockerfile: ingress-proxy/Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      PLNTIR_FLEET_UPSTREAM: http://fleet:8080
+      PLNTIR_LISTEN_ADDRESS: :8080
+    depends_on:
+      fleet:
+        condition: service_healthy
+    ports:
+      - "${FLEET_DEVICE_BIND_ADDRESS:?set FLEET_DEVICE_BIND_ADDRESS}:1338:8080"
+    networks:
+      - device
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    mem_reservation: 16m
+    pids_limit: 64
+    stop_grace_period: 20s
+
+networks:
+  backend:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: plntir-mdm-be
+  device:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: plntir-mdm-dev
+  edge:
+    driver_opts:
+      com.docker.network.bridge.name: plntir-mdm-eg
+
+volumes:
+  fleet-mysql:
+  fleet-redis:
+  fleet-data:
+  fleet-logs:
+  fleet-vulnerabilities:

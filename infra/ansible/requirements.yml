@@ -1,0 +1,4 @@
+---
+# deliberately uses ansible.builtin only. no galaxy download is required.
+collections: []
+roles: []

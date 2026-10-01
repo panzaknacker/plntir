@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export LC_ALL=C
+umask 027
+
+readonly CONFIG_LOADER=/opt/plntir/lib/managed-endpoint-config.sh
+readonly CONTROL_GROUP=plntircontrol
+readonly MONITOR_ROOT=/var/lib/plntir/monitor
+readonly RETRIEVED_ROOT=/var/lib/plntir/retrieved
+readonly STATUS_PATH=${MONITOR_ROOT}/all-users-export.json
+readonly PLAN_PATH=${MONITOR_ROOT}/all-users-plan.json
+readonly LOCK_PATH=${MONITOR_ROOT}/all-users-export.lock
+readonly GPG_HOME=/var/lib/plntir/archive-gnupg
+readonly MIN_RESERVE_BYTES=$((10 * 1024 * 1024 * 1024))
+readonly PLAN_CACHE_MAX_AGE_SECONDS=$((7 * 24 * 60 * 60))
+readonly MODE=${1:---check}
+
+case ${MODE} in
+--check | --export | --status) ;;
+*)
+    printf 'usage: %s --check|--export|--status\n' "$0" >&2
+    exit 64
+    ;;
+esac
+
+if [[ ${MODE} == --status ]]; then
+    if [[ -r ${STATUS_PATH} ]]; then
+        exec /usr/bin/jq . "${STATUS_PATH}"
+    fi
+    printf '{"schema_version":1,"state":"not_configured","reason":"no_status"}\n'
+    exit 0
+fi
+
+[[ -r ${CONFIG_LOADER} ]] || {
+    printf 'Managed Mac configuration loader is missing.\n' >&2
+    exit 69
+}
+# shellcheck source=/dev/null
+source "${CONFIG_LOADER}"
+load_managed_mac_config
+
+for directory in "${MONITOR_ROOT}" "${RETRIEVED_ROOT}"; do
+    [[ -d ${directory} && ! -L ${directory} ]] || {
+        printf 'Missing or unsafe state directory: %s\n' "${directory}" >&2
+        exit 77
+    }
+done
+
+exec 9>"${LOCK_PATH}"
+if ! /usr/bin/flock -n 9; then
+    if [[ ${MODE} == --check ]]; then
+        printf 'All-user export is already running; readiness check skipped.\n'
+        exit 0
+    fi
+    printf 'Another all-user export operation is already running.\n' >&2
+    exit 75
+fi
+/bin/chgrp "${CONTROL_GROUP}" "${LOCK_PATH}"
+/bin/chmod 0640 "${LOCK_PATH}"
+
+state=not_configured
+reason=activation_required
+checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+source_checked_at=''
+plan_cached=false
+local_user_count=0
+home_directory_count=0
+source_bytes=0
+required_bytes=0
+available_bytes=0
+reserve_bytes=0
+unreadable_entries=0
+archive_name=''
+archive_bytes=0
+archive_sha256=''
+completed_at=''
+
+load_previous_archive() {
+    [[ -r ${STATUS_PATH} ]] || return 0
+    archive_name=$(/usr/bin/jq -r '.archive // ""' "${STATUS_PATH}" 2>/dev/null || true)
+    archive_bytes=$(/usr/bin/jq -r '.archive_bytes // 0' "${STATUS_PATH}" 2>/dev/null || true)
+    archive_sha256=$(/usr/bin/jq -r '.sha256 // ""' "${STATUS_PATH}" 2>/dev/null || true)
+    completed_at=$(/usr/bin/jq -r '.completed_at // ""' "${STATUS_PATH}" 2>/dev/null || true)
+    [[ ${archive_bytes} =~ ^[0-9]+$ ]] || archive_bytes=0
+}
+
+write_status() {
+    local tmp
+    tmp=$(/usr/bin/mktemp "${MONITOR_ROOT}/.all-users-export.XXXXXX")
+    /usr/bin/jq -cn \
+        --arg state "${state}" \
+        --arg reason "${reason}" \
+        --arg checked_at "${checked_at}" \
+        --arg source_checked_at "${source_checked_at}" \
+        --argjson plan_cached "${plan_cached}" \
+        --argjson local_user_count "${local_user_count}" \
+        --argjson home_directory_count "${home_directory_count}" \
+        --argjson source_bytes "${source_bytes}" \
+        --argjson required_bytes "${required_bytes}" \
+        --argjson available_bytes "${available_bytes}" \
+        --argjson reserve_bytes "${reserve_bytes}" \
+        --argjson unreadable_entries "${unreadable_entries}" \
+        --arg archive "${archive_name}" \
+        --argjson archive_bytes "${archive_bytes}" \
+        --arg sha256 "${archive_sha256}" \
+        --arg completed_at "${completed_at}" \
+        '{
+            schema_version: 1,
+            state: $state,
+            reason: $reason,
+            checked_at: $checked_at,
+            source_checked_at: $source_checked_at,
+            plan_cached: $plan_cached,
+            local_user_count: $local_user_count,
+            home_directory_count: $home_directory_count,
+            source_bytes: $source_bytes,
+            required_bytes: $required_bytes,
+            available_bytes: $available_bytes,
+            reserve_bytes: $reserve_bytes,
+            unreadable_entries: $unreadable_entries,
+            archive: $archive,
+            archive_bytes: $archive_bytes,
+            sha256: $sha256,
+            completed_at: $completed_at
+        }' >"${tmp}"
+    /bin/chgrp "${CONTROL_GROUP}" "${tmp}"
+    /bin/chmod 0640 "${tmp}"
+    /bin/mv -f "${tmp}" "${STATUS_PATH}"
+}
+
+load_previous_archive
+
+if [[ -z ${MAC_ARCHIVE_KEY} || -z ${MAC_ARCHIVE_RECIPIENT} ]]; then
+    write_status
+    printf 'All-user export is not activated yet.\n'
+    exit 0
+fi
+[[ -d ${GPG_HOME} && ! -L ${GPG_HOME} ]] || {
+    state=not_configured
+    reason=archive_recipient_not_installed
+    write_status
+    exit 0
+}
+/usr/bin/gpg --homedir "${GPG_HOME}" --batch --list-keys "${MAC_ARCHIVE_RECIPIENT}" >/dev/null 2>&1 || {
+    state=not_configured
+    reason=archive_recipient_not_installed
+    write_status
+    exit 0
+}
+
+ssh_options=(
+    -T
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o IdentitiesOnly=yes
+    -o PasswordAuthentication=no
+    -o ServerAliveInterval=30
+    -o ServerAliveCountMax=4
+    -o StrictHostKeyChecking=yes
+    -o UserKnownHostsFile="${MAC_HOST_KEYS}"
+    -i "${MAC_ARCHIVE_KEY}"
+)
+ssh_command=(/usr/bin/ssh "${ssh_options[@]}" "${MAC_TARGET}")
+
+reuse_recent_storage_block() {
+    local previous_reason plan_epoch now_epoch cache_age source_headroom value
+    [[ ${MODE} == --check && -r ${STATUS_PATH} && -r ${PLAN_PATH} ]] || return 1
+    previous_reason=$(/usr/bin/jq -r '.reason // ""' "${STATUS_PATH}" 2>/dev/null || true)
+    [[ ${previous_reason} == insufficient_control_node_storage ]] || return 1
+    if ! /usr/bin/jq -e \
+        '.schema_version == 1 and .scope == "all-users" and .ok == true and (.bytes | type == "number") and (.unreadable_entries | type == "number")' \
+        "${PLAN_PATH}" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    plan_epoch=$(/usr/bin/stat -Lc %Y "${PLAN_PATH}" 2>/dev/null || true)
+    now_epoch=$(/bin/date +%s)
+    [[ ${plan_epoch} =~ ^[0-9]+$ && ${now_epoch} =~ ^[0-9]+$ ]] || return 1
+    ((now_epoch >= plan_epoch)) || return 1
+    cache_age=$((now_epoch - plan_epoch))
+    ((cache_age < PLAN_CACHE_MAX_AGE_SECONDS)) || return 1
+
+    local_user_count=$(/usr/bin/jq -r '.local_user_count // 0' "${PLAN_PATH}")
+    home_directory_count=$(/usr/bin/jq -r '.home_directory_count // 0' "${PLAN_PATH}")
+    source_bytes=$(/usr/bin/jq -r '.bytes // 0' "${PLAN_PATH}")
+    unreadable_entries=$(/usr/bin/jq -r '.unreadable_entries // 0' "${PLAN_PATH}")
+    source_checked_at=$(/usr/bin/jq -r '.checked_at // ""' "${PLAN_PATH}")
+    for value in local_user_count home_directory_count source_bytes unreadable_entries; do
+        [[ ${!value} =~ ^[0-9]+$ ]] || return 1
+    done
+    ((source_bytes > 0)) || return 1
+
+    source_headroom=$((source_bytes / 5))
+    required_bytes=$((source_bytes + source_headroom + reserve_bytes))
+    ((available_bytes < required_bytes)) || return 1
+
+    state=blocked
+    reason=insufficient_control_node_storage
+    plan_cached=true
+    write_status
+    return 0
+}
+
+perform_check() {
+    local plan_tmp plan_rc root_total_bytes root_total_kib available_kib source_headroom
+    checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+    read -r root_total_kib available_kib < <(/bin/df -Pk "${RETRIEVED_ROOT}" |
+        /usr/bin/awk 'NR == 2 {print $2, $4}')
+    [[ ${root_total_kib} =~ ^[0-9]+$ ]] || root_total_kib=0
+    [[ ${available_kib} =~ ^[0-9]+$ ]] || available_kib=0
+    root_total_bytes=$((root_total_kib * 1024))
+    available_bytes=$((available_kib * 1024))
+    reserve_bytes=$((root_total_bytes / 10))
+    if ((reserve_bytes < MIN_RESERVE_BYTES)); then
+        reserve_bytes=${MIN_RESERVE_BYTES}
+    fi
+
+    # a known local storage shortfall cannot become ready without more free
+    # destination space. reuse a recent successful source measurement so the
+    # repeated explicit check does not walk the active mac's complete /Users
+    # tree unnecessarily. export execution always performs a fresh measurement.
+    if reuse_recent_storage_block; then
+        return 0
+    fi
+
+    plan_tmp=$(/usr/bin/mktemp "${MONITOR_ROOT}/.all-users-plan.XXXXXX")
+    set +e
+    /usr/bin/timeout 1800 "${ssh_command[@]}" all-users-plan-v1 >"${plan_tmp}"
+    plan_rc=$?
+    set -e
+    if [[ ${plan_rc} -ne 0 ]]; then
+        /bin/rm -f "${plan_tmp}"
+        state=unreachable
+        reason=archive_ssh_failed
+        write_status
+        return 0
+    fi
+    if ! /usr/bin/jq -e \
+        '.schema_version == 1 and .scope == "all-users" and (.ok | type == "boolean") and (.bytes | type == "number") and (.unreadable_entries | type == "number")' \
+        "${plan_tmp}" >/dev/null; then
+        /bin/rm -f "${plan_tmp}"
+        state=failed
+        reason=invalid_plan
+        write_status
+        return 0
+    fi
+    /bin/chgrp "${CONTROL_GROUP}" "${plan_tmp}"
+    /bin/chmod 0640 "${plan_tmp}"
+    /bin/mv -f "${plan_tmp}" "${PLAN_PATH}"
+
+    local_user_count=$(/usr/bin/jq -r '.local_user_count // 0' "${PLAN_PATH}")
+    home_directory_count=$(/usr/bin/jq -r '.home_directory_count // 0' "${PLAN_PATH}")
+    source_bytes=$(/usr/bin/jq -r '.bytes // 0' "${PLAN_PATH}")
+    unreadable_entries=$(/usr/bin/jq -r '.unreadable_entries // 0' "${PLAN_PATH}")
+    source_checked_at=$(/usr/bin/jq -r '.checked_at // ""' "${PLAN_PATH}")
+    plan_cached=false
+    for value in local_user_count home_directory_count source_bytes unreadable_entries; do
+        [[ ${!value} =~ ^[0-9]+$ ]] || {
+            state=failed
+            reason=invalid_plan
+            write_status
+            return 0
+        }
+    done
+    source_headroom=$((source_bytes / 5))
+    required_bytes=$((source_bytes + source_headroom + reserve_bytes))
+
+    if [[ $(/usr/bin/jq -r '.ok' "${PLAN_PATH}") != true ]]; then
+        state=blocked
+        reason=$(/usr/bin/jq -r '.reason // "full_disk_access_required"' "${PLAN_PATH}")
+    elif ((available_bytes < required_bytes)); then
+        state=blocked
+        reason=insufficient_control_node_storage
+    else
+        state=ready
+        reason=ready
+    fi
+    write_status
+}
+
+perform_check
+if [[ ${MODE} == --check ]]; then
+    /usr/bin/jq . "${STATUS_PATH}"
+    exit 0
+fi
+
+if [[ ${state} != ready ]]; then
+    printf 'All-user export blocked: %s (source=%d required=%d available=%d unreadable=%d)\n' \
+        "${reason}" "${source_bytes}" "${required_bytes}" "${available_bytes}" \
+        "${unreadable_entries}" >&2
+    case ${reason} in
+    insufficient_control_node_storage) exit 75 ;;
+    full_disk_access_required) exit 77 ;;
+    *) exit 69 ;;
+    esac
+fi
+
+timestamp=$(/bin/date -u +%Y%m%dT%H%M%SZ)
+archive_name=all-users-${timestamp}-${RANDOM}.tar.zst.gpg
+readonly final_path=${RETRIEVED_ROOT}/${archive_name}
+readonly partial_path=${RETRIEVED_ROOT}/.${archive_name}.partial
+readonly reserve_path=${RETRIEVED_ROOT}/.all-users-reserve.$$
+for path in "${final_path}" "${partial_path}" "${reserve_path}"; do
+    [[ ! -e ${path} && ! -L ${path} ]] || {
+        printf 'Refusing existing export path: %s\n' "${path}" >&2
+        exit 77
+    }
+done
+
+export_complete=false
+final_created=false
+manifest_tmp=''
+cleanup_export() {
+    local rc=$?
+    trap - EXIT HUP INT TERM
+    /bin/rm -f "${reserve_path}"
+    if [[ ${export_complete} != true ]]; then
+        /bin/rm -f "${partial_path}"
+        [[ -z ${manifest_tmp} ]] || /bin/rm -f "${manifest_tmp}"
+        if [[ ${final_created} == true ]]; then
+            /bin/rm -f "${final_path}" "${final_path}.json"
+        fi
+    fi
+    exit "${rc}"
+}
+trap cleanup_export EXIT HUP INT TERM
+
+if ! /usr/bin/fallocate -l "${reserve_bytes}" "${reserve_path}"; then
+    state=blocked
+    reason=storage_reservation_failed
+    archive_name=''
+    checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+    write_status
+    exit 75
+fi
+/bin/chmod 0600 "${reserve_path}"
+state=exporting
+reason=streaming_encrypted_archive
+checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+archive_bytes=0
+archive_sha256=''
+completed_at=''
+write_status
+
+set +e
+"${ssh_command[@]}" all-users-stream-v1 |
+    /usr/bin/zstd -q -T0 -3 |
+    /usr/bin/gpg \
+        --homedir "${GPG_HOME}" \
+        --batch \
+        --no-tty \
+        --yes \
+        --trust-model always \
+        --recipient "${MAC_ARCHIVE_RECIPIENT}" \
+        --output "${partial_path}" \
+        --encrypt
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ ${pipeline_status[0]} -ne 0 || ${pipeline_status[1]} -ne 0 || ${pipeline_status[2]} -ne 0 ]]; then
+    state=failed
+    reason="pipeline_${pipeline_status[0]}_${pipeline_status[1]}_${pipeline_status[2]}"
+    archive_name=''
+    checked_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+    write_status
+    printf 'Encrypted export pipeline failed (%s/%s/%s).\n' \
+        "${pipeline_status[0]}" "${pipeline_status[1]}" "${pipeline_status[2]}" >&2
+    exit 74
+fi
+
+/bin/rm -f "${reserve_path}"
+archive_bytes=$(/usr/bin/stat -Lc %s "${partial_path}")
+archive_sha256=$(/usr/bin/sha256sum "${partial_path}" | /usr/bin/awk '{print $1}')
+/bin/chgrp "${CONTROL_GROUP}" "${partial_path}"
+/bin/chmod 0640 "${partial_path}"
+completed_at=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)
+manifest_tmp=$(/usr/bin/mktemp "${RETRIEVED_ROOT}/.${archive_name}.manifest.XXXXXX")
+/usr/bin/jq -cn \
+    --arg archive "${archive_name}" \
+    --arg completed_at "${completed_at}" \
+    --arg sha256 "${archive_sha256}" \
+    --argjson archive_bytes "${archive_bytes}" \
+    --argjson source_bytes "${source_bytes}" \
+    --argjson local_user_count "${local_user_count}" \
+    '{schema_version:1,archive:$archive,completed_at:$completed_at,sha256:$sha256,archive_bytes:$archive_bytes,source_bytes:$source_bytes,local_user_count:$local_user_count,encrypted:true,compression:"zstd"}' \
+    >"${manifest_tmp}"
+/bin/chgrp "${CONTROL_GROUP}" "${manifest_tmp}"
+/bin/chmod 0640 "${manifest_tmp}"
+/bin/mv -f "${partial_path}" "${final_path}"
+final_created=true
+/bin/mv -f "${manifest_tmp}" "${final_path}.json"
+manifest_tmp=''
+
+export_complete=true
+checked_at=${completed_at}
+state=complete
+reason=encrypted_archive_complete
+write_status
+trap - EXIT HUP INT TERM
+printf 'Encrypted all-user archive complete: %s (%d bytes, sha256 %s)\n' \
+    "${final_path}" "${archive_bytes}" "${archive_sha256}"

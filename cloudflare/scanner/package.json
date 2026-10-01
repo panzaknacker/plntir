@@ -1,0 +1,25 @@
+{
+  "name": "@plntir/scanner",
+  "version": "0.1.0-shadow",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "check": "npm run cf-typegen && tsc --noEmit && vitest run",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20260904.1",
+    "@types/node": "26.4.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.129.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

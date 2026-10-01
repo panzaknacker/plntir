@@ -1,0 +1,24 @@
+[Unit]
+Description=Plntir Secure Archive readiness and Control Node capacity check
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=35min
+User=admin
+Group=plntircontrol
+ExecStart=/opt/plntir/bin/plntir-secure-archive-manage --check
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/plntir/monitor /var/lib/plntir/archive-gnupg
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

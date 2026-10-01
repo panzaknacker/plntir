@@ -1,0 +1,10 @@
+# installed as /etc/plntir/managed-endpoint.conf by the activation script.
+# values are deliberately unquoted: the loader rejects whitespace and unknown keys.
+MAC_TRANSPORT=dispatch
+MAC_TARGET=macagent@100.101.0.2
+MAC_MONITOR_KEY=/home/admin/.ssh/plntir_endpoint_monitor_ed25519
+MAC_RESPONSE_KEY=/home/admin/.ssh/plntir_endpoint_response_ed25519
+MAC_ARCHIVE_KEY=/home/admin/.ssh/plntir_endpoint_archive_ed25519
+MAC_ARCHIVE_RECIPIENT=REPLACE_WITH_GPG_FINGERPRINT
+MAC_HOST_KEYS=/home/admin/.ssh/plntir_endpoint_known_hosts
+MAC_MANAGED_HOME=/Users/MANAGED_USER

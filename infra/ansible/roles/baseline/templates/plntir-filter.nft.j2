@@ -1,0 +1,89 @@
+# Managed by Plntir. Every service rule uses exact source addresses.
+destroy table inet plntir_filter
+
+table inet plntir_filter {
+    chain input {
+        type filter hook input priority -10; policy drop;
+
+        iifname "lo" accept
+        ct state invalid drop
+        ct state established,related accept
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+        udp sport 67 udp dport 68 accept
+        udp sport 547 udp dport 546 accept
+{% for rule in plntir_input_tcp_rules %}
+{% if rule.ipv4_sources | length > 0 %}
+        ip saddr { {{ rule.ipv4_sources | join(', ') }} } tcp dport {{ rule.port }} accept comment "{{ rule.name }}"
+{% endif %}
+{% if rule.ipv6_sources | length > 0 %}
+        ip6 saddr { {{ rule.ipv6_sources | join(', ') }} } tcp dport {{ rule.port }} accept comment "{{ rule.name }}"
+{% endif %}
+{% endfor %}
+{% for rule in plntir_docker_tcp_rules %}
+{% if rule.ipv4_sources | length > 0 %}
+        ip saddr { {{ rule.ipv4_sources | join(', ') }} } tcp dport {{ rule.published_port }} accept comment "{{ rule.name }}-proxy"
+{% endif %}
+{% if rule.ipv6_sources | length > 0 %}
+        ip6 saddr { {{ rule.ipv6_sources | join(', ') }} } tcp dport {{ rule.published_port }} accept comment "{{ rule.name }}-proxy"
+{% endif %}
+{% endfor %}
+        counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority -10; policy drop;
+
+        ct state invalid drop
+        ct state established,related accept
+        iifname "lo" accept
+{% for interface in plntir_docker_internal_interfaces %}
+        iifname "{{ interface }}" oifname "{{ interface }}" accept comment "docker-required-internal"
+{% endfor %}
+{% for source_interface in plntir_docker_egress_interfaces %}
+{% for destination_interface in plntir_external_interfaces %}
+        iifname "{{ source_interface }}" oifname "{{ destination_interface }}" accept comment "docker-required-egress"
+{% endfor %}
+{% endfor %}
+{% for rule in plntir_docker_tcp_rules %}
+{% if rule.ipv4_sources | length > 0 %}
+        ip saddr { {{ rule.ipv4_sources | join(', ') }} } ct original proto-dst {{ rule.published_port }} tcp dport {{ rule.translated_port }} accept comment "{{ rule.name }}-dnat"
+{% endif %}
+{% if rule.ipv6_sources | length > 0 %}
+        ip6 saddr { {{ rule.ipv6_sources | join(', ') }} } ct original proto-dst {{ rule.published_port }} tcp dport {{ rule.translated_port }} accept comment "{{ rule.name }}-dnat"
+{% endif %}
+{% endfor %}
+        counter drop
+    }
+
+    chain output {
+        type filter hook output priority -10; policy {{ plntir_output_policy }};
+
+        oifname "lo" accept
+        ct state invalid drop
+        ct state established,related accept
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+        udp sport 68 udp dport 67 accept
+        udp sport 546 udp dport 547 accept
+{% for rule in plntir_output_tcp_rules %}
+{% if rule.ipv4_destinations | length > 0 %}
+        ip daddr { {{ rule.ipv4_destinations | join(', ') }} } tcp dport {{ rule.port }} accept comment "{{ rule.name }}"
+{% endif %}
+{% if rule.ipv6_destinations | length > 0 %}
+        ip6 daddr { {{ rule.ipv6_destinations | join(', ') }} } tcp dport {{ rule.port }} accept comment "{{ rule.name }}"
+{% endif %}
+{% endfor %}
+{% for rule in plntir_output_udp_rules %}
+{% if rule.ipv4_destinations | length > 0 %}
+        ip daddr { {{ rule.ipv4_destinations | join(', ') }} } udp dport {{ rule.port }} accept comment "{{ rule.name }}"
+{% endif %}
+{% if rule.ipv6_destinations | length > 0 %}
+        ip6 daddr { {{ rule.ipv6_destinations | join(', ') }} } udp dport {{ rule.port }} accept comment "{{ rule.name }}"
+{% endif %}
+{% endfor %}
+{% if plntir_output_policy == 'drop' %}
+        counter drop
+{% endif %}
+    }
+}

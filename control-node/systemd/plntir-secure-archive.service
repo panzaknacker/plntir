@@ -1,0 +1,27 @@
+[Unit]
+Description=Plntir Secure Archive for encrypted managed endpoint recovery
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=infinity
+User=admin
+Group=plntircontrol
+ExecStart=/opt/plntir/bin/plntir-secure-archive-manage --export
+UMask=0027
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/plntir/monitor /var/lib/plntir/retrieved /var/lib/plntir/archive-gnupg
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

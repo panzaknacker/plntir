@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "mode": "shadow",
+  "listen": "127.0.0.1:8080",
+  "allowed_hosts": [
+    "admin.plntir.example"
+  ],
+  "database_path": "/var/lib/plntir/core/core.db",
+  "legacy_status_path": "/var/lib/plntir/shadow/status-v2.json",
+  "cloudflare_access_issuer": "https://REPLACE.cloudflareaccess.com",
+  "cloudflare_access_audience": "REPLACE_WITH_ACCESS_AUD_TAG"
+}

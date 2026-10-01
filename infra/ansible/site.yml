@@ -1,0 +1,51 @@
+---
+- name: Harden new Plntir v1 nodes one at a time
+  hosts: plntir_v1
+  gather_facts: false
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+
+  pre_tasks:
+    - name: Require an immediate check or deployment gate
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_check_mode and (plntir_check_mode_authorized | bool)) or
+            ((not ansible_check_mode) and (plntir_deployment_authorized | bool))
+          - plntir_immediate_approval_reference is match('^approved-[0-9]{8}T[0-9]{6}Z-[a-z0-9-]{3,48}$')
+          - plntir_release_id is match('^sha256:[0-9a-f]{64}$')
+        fail_msg: >-
+          Ansible is fail-closed. Supply the matching authorization switch, a
+          fresh approved-UTC reference, and the signed release SHA-256.
+
+    - name: Gather facts only after the gate
+      ansible.builtin.setup:
+
+    - name: Bind execution to the intended fresh Ubuntu node
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in ['plntir-core-01', 'plntir-mdm-01', 'plntir-edge-01', 'plntir-relay-01', 'plntir-siem-01']
+          - ansible_hostname == inventory_hostname
+          - ansible_system == 'Linux'
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version == '24.04'
+          - ansible_architecture == plntir_expected_architecture
+          - plntir_node_role in ['core', 'mdm', 'edge', 'relay', 'siem']
+          - plntir_aws_resource_arn is defined
+          - plntir_aws_resource_arn != plntir_forbidden_watch_arn
+          - plntir_forbidden_watch_arn not in plntir_aws_resource_arn
+          - ansible_host is defined
+          - "'REPLACE' not in ansible_host"
+          - "'REPLACE' not in plntir_aws_resource_arn"
+        fail_msg: >-
+          Host identity, OS, architecture, or AWS binding does not match the
+          approved new-node inventory. The existing Watch is forbidden.
+
+  roles:
+    - role: baseline
+    - role: wazuh_isolated
+      when:
+        - plntir_node_role == 'siem'
+        - plntir_wazuh_enabled | bool

@@ -1,0 +1,13 @@
+Defaults!/usr/local/libexec/plntir-retrieval-export secure_path=/usr/bin:/bin:/usr/sbin:/sbin
+
+Cmnd_Alias PLNTIR_ENDPOINT_MONITOR = /usr/local/libexec/plntir-security-collector posture, \
+    /usr/local/libexec/plntir-security-collector telemetry
+Cmnd_Alias PLNTIR_ENDPOINT_RESPONSE_STATUS = /usr/local/libexec/plntir-response-status
+Cmnd_Alias PLNTIR_ENDPOINT_USER_EXPORT = /usr/local/libexec/plntir-retrieval-export list-b64 *, \
+    /usr/local/libexec/plntir-retrieval-export preview-b64 *, \
+    /usr/local/libexec/plntir-retrieval-export probe-b64 *, \
+    /usr/local/libexec/plntir-retrieval-export export-b64 *, \
+    /usr/local/libexec/plntir-retrieval-export safari-history *
+
+@AGENT_USER@ ALL=(root) NOPASSWD: PLNTIR_ENDPOINT_MONITOR, PLNTIR_ENDPOINT_RESPONSE_STATUS
+@AGENT_USER@ ALL=(@MANAGED_USER@) NOPASSWD: PLNTIR_ENDPOINT_USER_EXPORT

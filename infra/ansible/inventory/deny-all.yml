@@ -1,0 +1,15 @@
+---
+all:
+  children:
+    plntir_v1:
+      children:
+        core:
+          hosts: {}
+        mdm:
+          hosts: {}
+        edge:
+          hosts: {}
+        relay:
+          hosts: {}
+        siem:
+          hosts: {}

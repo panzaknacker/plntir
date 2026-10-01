@@ -1,0 +1,5 @@
+#!/usr/sbin/nft -f
+
+# do not flush the ruleset: other services own separate tables.
+# plntir replaces only inet/plntir_filter.
+include "/etc/nftables.d/90-plntir-filter.nft"

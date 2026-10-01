@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+umask 027
+readonly CONFIG_LOADER=/opt/plntir/lib/managed-endpoint-config.sh
+[[ -r ${CONFIG_LOADER} ]] || {
+    printf 'Missing managed Mac configuration loader.\n' >&2
+    exit 78
+}
+# shellcheck source=/dev/null
+source "${CONFIG_LOADER}"
+load_managed_mac_config
+readonly TARGET=${MAC_TARGET}
+readonly KEY=${MAC_RESPONSE_KEY}
+readonly HOST_KEYS=${MAC_HOST_KEYS}
+readonly STORE=/var/lib/plntir/retrieved
+readonly EXPORTER=/usr/local/libexec/plntir-retrieval-export
+readonly EXPORT_BANDWIDTH_KBIT=25000
+
+usage() {
+    printf 'usage: %s [--list|--preview|--probe] %s/PATH | --safari-history HOURS LIMIT\n' \
+        "$0" "${MAC_MANAGED_HOME}" >&2
+    exit 64
+}
+
+[[ $# -ge 1 ]] || usage
+mode=export-b64
+requested=''
+hours=''
+limit=''
+case $1 in
+--list)
+    [[ $# -eq 2 ]] || usage
+    mode=list-b64
+    requested=$2
+    ;;
+--preview)
+    [[ $# -eq 2 ]] || usage
+    mode=preview-b64
+    requested=$2
+    ;;
+--probe)
+    [[ $# -eq 2 ]] || usage
+    mode=probe-b64
+    requested=$2
+    ;;
+--safari-history)
+    [[ $# -eq 3 && $2 =~ ^[0-9]{1,4}$ && $3 =~ ^[0-9]{1,4}$ ]] || usage
+    hours=$((10#$2))
+    limit=$((10#$3))
+    ((hours >= 1 && hours <= 8760 && limit >= 1 && limit <= 5000)) || usage
+    mode=safari-history
+    ;;
+*)
+    [[ $# -eq 1 ]] || usage
+    requested=$1
+    ;;
+esac
+
+encoded=''
+if [[ ${mode} != safari-history ]]; then
+    [[ ${requested} == "${MAC_MANAGED_HOME}" || ${requested} == "${MAC_MANAGED_HOME}"/* ]] || {
+        printf 'Path must be inside %s\n' "${MAC_MANAGED_HOME}" >&2
+        exit 77
+    }
+    encoded=$(printf '%s' "$requested" | /usr/bin/base64 -w0)
+fi
+ssh_base=(
+    /usr/bin/ssh
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=yes
+    -o UserKnownHostsFile="$HOST_KEYS"
+    -i "$KEY"
+    "$TARGET"
+)
+if [[ ${MAC_TRANSPORT} == dispatch ]]; then
+    case ${mode} in
+    list-b64) remote_export_command="export-list-v1 ${encoded}" ;;
+    preview-b64) remote_export_command="export-preview-v1 ${encoded}" ;;
+    probe-b64) remote_export_command="export-probe-v1 ${encoded}" ;;
+    safari-history) remote_export_command="safari-history-v1 ${hours} ${limit}" ;;
+    *) remote_export_command="export-v1 ${encoded}" ;;
+    esac
+else
+    readonly MANAGED_USER=${MAC_MANAGED_HOME##*/}
+    if [[ ${mode} == safari-history ]]; then
+        remote_export_command="sudo -n -u ${MANAGED_USER} ${EXPORTER} safari-history ${hours} ${limit}"
+    else
+        remote_export_command="sudo -n -u ${MANAGED_USER} ${EXPORTER} ${mode} ${encoded}"
+    fi
+fi
+response=$("${ssh_base[@]}" "${remote_export_command}")
+
+if [[ ${mode} == list-b64 || ${mode} == preview-b64 || ${mode} == probe-b64 || ${mode} == safari-history ]]; then
+    printf '%s\n' "$response" | /usr/bin/jq .
+    exit 0
+fi
+
+printf '%s\n' "$response" | /usr/bin/jq -e '.ok == true' >/dev/null
+archive=$(printf '%s\n' "$response" | /usr/bin/jq -r '.archive')
+expected=$(printf '%s\n' "$response" | /usr/bin/jq -r '.sha256')
+archive_bytes=$(printf '%s\n' "$response" | /usr/bin/jq -r '.archive_bytes')
+[[ $archive =~ ^/Users/Shared/[.]plntir/archive/retrievals/[A-Za-z0-9._-]+[.]tar[.]gz$ ]]
+[[ $expected =~ ^[a-f0-9]{64}$ ]]
+[[ ${archive_bytes} =~ ^[0-9]+$ ]] || exit 65
+archive_bytes=$((10#${archive_bytes}))
+((archive_bytes > 0)) || exit 65
+
+delete_remote_archive() {
+    if [[ ${MAC_TRANSPORT} == dispatch ]]; then
+        "${ssh_base[@]}" "export-delete-v1 ${archive}"
+    else
+        "${ssh_base[@]}" "/bin/rm -f -- ${archive}"
+    fi
+}
+
+read -r filesystem_kib available_kib < <(/bin/df -Pk "${STORE}" |
+    /usr/bin/awk 'NR == 2 {print $2, $4}')
+[[ ${filesystem_kib} =~ ^[0-9]+$ && ${available_kib} =~ ^[0-9]+$ ]] || exit 65
+filesystem_kib=$((10#${filesystem_kib}))
+available_kib=$((10#${available_kib}))
+reserve_kib=$((filesystem_kib / 10))
+minimum_reserve_kib=$((10 * 1024 * 1024))
+if ((reserve_kib < minimum_reserve_kib)); then
+    reserve_kib=${minimum_reserve_kib}
+fi
+archive_kib=$(((archive_bytes + 1023) / 1024))
+if ((available_kib < archive_kib + reserve_kib)); then
+    delete_remote_archive || printf 'Warning: remote archive cleanup failed.\n' >&2
+    printf 'Insufficient Control Node storage: archive needs %d KiB plus %d KiB reserve; %d KiB available.\n' \
+        "${archive_kib}" "${reserve_kib}" "${available_kib}" >&2
+    exit 75
+fi
+
+day=$(/bin/date -u +%Y-%m-%d)
+outdir="$STORE/$day"
+/bin/mkdir -p "$outdir"
+dest="$outdir/$(/usr/bin/basename "$archive")"
+tmp="$dest.partial"
+/bin/rm -f "$tmp"
+trap '/bin/rm -f "$tmp"' EXIT
+
+/usr/bin/scp -O -q -l "${EXPORT_BANDWIDTH_KBIT}" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$HOST_KEYS" \
+    -i "$KEY" \
+    "$TARGET:$archive" "$tmp"
+
+transferred_bytes=$(/usr/bin/stat -Lc %s "$tmp")
+[[ ${transferred_bytes} =~ ^[0-9]+$ && $((10#${transferred_bytes})) -eq ${archive_bytes} ]] || {
+    printf 'Transferred archive size mismatch; remote archive retained.\n' >&2
+    exit 74
+}
+actual=$(/usr/bin/sha256sum "$tmp" | /usr/bin/awk '{print $1}')
+[[ $actual == "$expected" ]] || {
+    printf 'Checksum mismatch; remote archive retained.\n' >&2
+    exit 74
+}
+/usr/bin/tar -tzf "$tmp" >/dev/null
+/bin/chmod 0640 "$tmp"
+/bin/mv "$tmp" "$dest"
+trap - EXIT
+
+delete_remote_archive
+/usr/bin/logger -t plntir-endpoint-health-retrieve -- \
+    "retrieved source=$requested destination=$dest sha256=$actual"
+printf '%s\n' "$dest"

@@ -1,0 +1,13 @@
+[sshd]
+enabled = true
+backend = systemd
+mode = normal
+# never ban loopback, the cloudflare device mesh, or the instance VPC.
+ignoreip = 127.0.0.0/8 ::1 100.96.0.0/12 172.26.0.0/16
+maxretry = 6
+findtime = 10m
+bantime = 15m
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 24h
+

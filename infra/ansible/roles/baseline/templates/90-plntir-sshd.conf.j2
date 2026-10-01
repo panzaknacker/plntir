@@ -1,0 +1,27 @@
+# Managed by Plntir. SSM is the independent recovery plane.
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+UsePAM yes
+X11Forwarding no
+DisableForwarding yes
+PermitTunnel no
+GatewayPorts no
+PermitUserEnvironment no
+IgnoreRhosts yes
+HostbasedAuthentication no
+MaxAuthTries 3
+MaxSessions 2
+LoginGraceTime 20
+ClientAliveInterval 60
+ClientAliveCountMax 2
+LogLevel VERBOSE
+AllowUsers {{ plntir_admin_user }}{% if plntir_bootstrap_access_retained %} ubuntu{% endif %}
+{% if plntir_ssh_ca_public_key != '' %}
+TrustedUserCAKeys /etc/ssh/plntir_user_ca.pub
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+{% endif %}

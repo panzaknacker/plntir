@@ -1,0 +1,19 @@
+PermitRootLogin no
+PubkeyAuthentication yes
+LoginGraceTime 30
+PermitUserEnvironment no
+
+Match User @AGENT_USER@
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthenticationMethods publickey
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+DisableForwarding yes
+PermitTunnel no
+PermitTTY no
+MaxAuthTries 3
+MaxSessions 2
+
+Match all
